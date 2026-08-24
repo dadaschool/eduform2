@@ -74,6 +74,7 @@ const TABLES = {
   assessments: 'id', assessment_classes: 'assessment_id', assessment_items: 'id',
   student_assessment_checks: 'id', assignments: 'id', assignment_classes: 'assignment_id',
   assignment_submissions: 'id', observations: 'id', student_record_drafts: 'id', messages: 'id',
+  class_teachers: 'class_id',
 }
 const missing = []
 const counts = {}
@@ -83,7 +84,7 @@ for (const [t, sel] of Object.entries(TABLES)) {
   else counts[t] = r.n
 }
 if (missing.length === 0) {
-  console.log(ok(`15개 전부 있음 — ${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(', ')}`))
+  console.log(ok(`${Object.keys(TABLES).length}개 전부 있음 — ${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(', ')}`))
 } else {
   fail(`없는 테이블: ${missing.join(', ')}`, 'supabase/schema.sql 을 실행하세요 (npm run db:setup 또는 SQL Editor 에 붙여넣기)')
 }
@@ -101,6 +102,15 @@ const FNS = [
   ['is_assignment_for_my_class', { p_assignment_id: NIL }],
   ['increment_invite_code', { code: '__doctor_probe__' }],
   ['verify_invite_code', { p_code: '__doctor_probe__' }],
+  // 아래는 다중교사·관리자 기능이 쓰는 것들. 이게 없으면 관리자 화면과
+  // 교사의 반 담당이 «화면은 뜨는데 동작하지 않는» 상태가 된다.
+  ['is_teacher', {}],
+  ['is_admin', {}],
+  ['is_my_class', { p_class_id: NIL }],
+  ['is_my_student', { p_student_id: NIL }],
+  ['is_my_class_teacher', { p_teacher_id: NIL }],
+  ['my_teachers', {}],
+  ['register_with_invite', { p_code: '__doctor_probe__', p_name: '__doctor_probe__' }],
 ]
 const noFn = []
 for (const [fn, args] of FNS) {
@@ -136,13 +146,20 @@ console.log(head('6. 계정'))
 if (!missing.includes('profiles')) {
   const res = await fetch(`${U}/rest/v1/profiles?select=id,role,teacher_id`, { headers: svc })
   const rows = await res.json()
+  const admins = rows.filter((r) => r.role === 'admin').length
   const teachers = rows.filter((r) => r.role === 'teacher').length
   const students = rows.filter((r) => r.role === 'student')
   const orphan = students.filter((s) => !s.teacher_id).length
-  console.log(`  교사 ${teachers}명 · 학생 ${students.length}명`)
+  console.log(`  관리자 ${admins}명 · 교사 ${teachers}명 · 학생 ${students.length}명`)
   if (teachers === 0) {
     fail('교사 계정이 없습니다 — 로그인할 수 있는 계정이 없습니다',
       'README 의 교사 계정 만들기를 따르거나, npm run db:seed 로 시범 계정을 넣으세요')
+  }
+  // 관리자가 없으면 사용자 관리·반 관리 화면에 들어갈 수 있는 사람이 없다.
+  // 화면은 배포돼 있어도 아무도 열 수 없어서, 빠뜨리기 쉬운 항목이다.
+  if (admins === 0 && !missing.includes('class_teachers')) {
+    console.log(warn('관리자 계정이 없습니다 — /admin/users 화면에 아무도 들어갈 수 없습니다'))
+    todo.push("관리자를 지정하세요: update profiles set role = 'admin' where email = '내이메일';")
   }
   if (orphan > 0) {
     console.log(warn(`teacher_id 가 빈 학생 ${orphan}명 — 교사 화면에 보이지 않습니다`))
