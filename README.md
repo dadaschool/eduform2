@@ -1,14 +1,18 @@
-# 에듀폼2 (EduForm 2)
+# 에듀폼 2 (EduForm) — 교내 서버판
 
 초·중등 교사용 학생 평가·기록 관리 웹앱. 평가 루브릭, 과제, 관찰기록, 디지털 배지, 쪽지를
 한곳에서 관리하고, 쌓인 자료로 **생활기록부 세특 초안을 AI가 작성**합니다.
 
-> **에듀폼2 는 학교 내부 서버 운영을 기준으로 갈라져 나온 판입니다.**
-> 학생 정보를 학교 밖에 두지 않으려는 경우를 위해 Supabase 를 직접 띄웁니다.
-> 구축 절차는 [SELFHOST.md](SELFHOST.md) 를 보세요.
-> 클라우드(Supabase 호스팅)로 쓰는 1 판은 별도 저장소에서 그대로 운영됩니다.
+> **이 저장소는 학교 안 컴퓨터에서 돌리는 판입니다.**
+> 설치 절차 → **[SELFHOST.md](SELFHOST.md)**
+>
+> 리눅스도 Docker 도 쓰지 않고 전부 윈도우 프로그램(Postgres + PostgREST + Node.js)으로
+> 돌아갑니다. 학생 자료가 학교 밖으로 나가지 않고 **AI 기능만** 바깥 인터넷을 씁니다.
+>
+> 클라우드(Vercel + Supabase)로 쓰시려면 온라인판
+> [dadaschool/eduform](https://github.com/dadaschool/eduform) 을 쓰세요.
 
-`Next.js 14` · `Supabase` · `Tailwind 4 / shadcn` · `Gemini / 업스테이지 Solar`
+`Next.js 14` · `Postgres + PostgREST` · `Tailwind 4 / shadcn` · `Gemini / 업스테이지 Solar`
 
 ---
 
@@ -35,13 +39,18 @@
 
 ## 내 계정에 설치하기
 
-두 가지 길이 있습니다. **터미널을 안 쓰셔도 됩니다.**
+세 가지 길이 있습니다. **A 는 터미널을 안 쓰셔도 됩니다.**
 
-| | 경로 A — 클릭만 | 경로 B — 로컬 개발까지 |
-|---|---|---|
-| 필요한 것 | 웹브라우저 | 브라우저 + Node.js 20+ |
-| 걸리는 시간 | 약 10분 | 약 20분 |
-| 코드 수정 | 못 함 | 가능 |
+| | 경로 A — 클릭만 | 경로 B — 로컬 개발까지 | 경로 C — 교내 서버 |
+|---|---|---|---|
+| 필요한 것 | 웹브라우저 | 브라우저 + Node.js 20+ | 상시 켜둘 윈도우 PC |
+| 걸리는 시간 | 약 10분 | 약 20분 | 1~2시간 |
+| 자료가 있는 곳 | 클라우드 | 클라우드 | 학교 안 |
+| 코드 수정 | 못 함 | 가능 | 가능 |
+
+경로 C 는 학생 자료를 학교 밖으로 내보내지 않는 설치입니다. **리눅스도 Docker 도 쓰지
+않고** 전부 윈도우 프로그램(Postgres + PostgREST + Node.js)으로 돌아갑니다. 절차가 길어
+[SELFHOST.md](SELFHOST.md) 에 따로 적었습니다.
 
 ---
 
@@ -91,16 +100,13 @@
 
 ### A-6. 배포
 
-> **배포 버튼은 아직 없습니다.** 에듀폼2 저장소를 GitHub 에 만든 뒤,
-> 아래 URL 의 `사용자명/저장소명` 을 바꿔 넣으면 버튼이 동작합니다.
->
-> ```
-> https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2F사용자명%2F저장소명&env=NEXT_PUBLIC_SUPABASE_URL%2CNEXT_PUBLIC_SUPABASE_ANON_KEY%2CSUPABASE_SERVICE_ROLE_KEY
-> ```
->
-> 내부 서버로 운영할 계획이면 이 경로 대신 [SELFHOST.md](SELFHOST.md) 를 따르세요.
+[![Vercel로 배포](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fgjdadat%2Feduform&project-name=eduform&repository-name=eduform&env=NEXT_PUBLIC_SUPABASE_URL%2CNEXT_PUBLIC_SUPABASE_ANON_KEY%2CSUPABASE_SERVICE_ROLE_KEY&envDescription=Supabase+%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8%EC%9D%98+%EC%A3%BC%EC%86%8C%EC%99%80+API+%ED%82%A4+3%EA%B0%9C+%28Project+Settings+%3E+API+%EC%97%90%EC%84%9C+%EB%B3%B5%EC%82%AC%29&envLink=https%3A%2F%2Fgithub.com%2Fgjdadat%2Feduform%2Fblob%2Fmain%2FREADME.md)
 
-https://vercel.com/new 에서 내 저장소를 선택하고 **A-5 의 키 3개**를 입력해도 됩니다.
+버튼을 누르면 저장소가 복제되고 **A-5 의 키 3개를 입력받는 화면**이 나옵니다.
+붙여넣고 **Deploy** 를 누르면 끝입니다.
+
+> 위 버튼은 **이 원본 저장소**를 복제합니다. A-1 에서 만든 내 저장소로 배포하려면
+> 대신 https://vercel.com/new 에서 내 저장소를 선택하세요.
 
 배포가 끝나면 확인할 것 두 가지:
 
@@ -223,6 +229,7 @@ values ('복사한-UID', '이메일@example.com', '홍길동', 'teacher');
 | `npm run db:setup` | DB 스키마 적용 |
 | `npm run db:seed` | DB 스키마 + 시범 데이터 |
 | `npm run lint` | 코드 검사 |
+| `npm run selfhost:keys` | 교내 서버용 API 키 생성 ([SELFHOST.md](SELFHOST.md)) |
 
 ---
 
@@ -251,17 +258,6 @@ scripts/
 **보안 구조**: 모든 테이블에 RLS 가 걸려 있습니다. 교사는 자기가 담당한 학생과 자기가 만든
 자료만, 학생은 자기 것과 자기 반 것만 접근합니다. 화면 접근은 `(teacher)` / `(student)`
 레이아웃이 서버에서 검사해 되돌립니다.
-
----
-
-## 학교 내부 서버에 직접 구축하려면
-
-학생 정보를 학교 밖에 두지 않으려면 Supabase 를 직접 띄울 수 있습니다.
-**앱 코드는 고치지 않습니다** — 주소와 키만 바꿉니다.
-절차는 [SELFHOST.md](SELFHOST.md) 를 보세요.
-
-주의: PostgreSQL 만 설치해서는 동작하지 않습니다. 앱은 Postgres 가 아니라
-Supabase 의 HTTP API(PostgREST · GoTrue · Realtime)에 붙습니다.
 
 ---
 

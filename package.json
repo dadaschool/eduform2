@@ -1,5 +1,5 @@
 {
-  "name": "eduform2",
+  "name": "eduform",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,7 +9,8 @@
     "lint": "next lint",
     "db:setup": "node scripts/db-setup.mjs",
     "db:seed": "node scripts/db-setup.mjs --seed",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "selfhost:keys": "node scripts/selfhost-keys.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -22,6 +23,7 @@
     "lucide-react": "^1.21.0",
     "next": "^14.2.29",
     "next-themes": "^0.3.0",
+    "pg": "^8.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "shadcn": "^4.11.0",
@@ -33,11 +35,11 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "eslint": "^8",
     "eslint-config-next": "^14.2.29",
-    "pg": "^8.22.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

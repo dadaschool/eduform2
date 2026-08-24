@@ -1,4 +1,4 @@
-export type Role = 'teacher' | 'student'
+export type Role = 'admin' | 'teacher' | 'student'
 
 export type CheckType = 'ox' | 'level3' | 'status3' | 'number' | 'score5' | 'text'
 

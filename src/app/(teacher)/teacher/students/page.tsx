@@ -53,9 +53,20 @@ export default function StudentsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // 내가 담당하는 반을 먼저 찾는다. 예전에는 profiles.teacher_id 로 학생을
+    // 찾아서, 같은 반을 담당해도 다른 교사의 학생은 보이지 않았다.
+    const { data: mine } = await supabase
+      .from('class_teachers').select('class_id').eq('teacher_id', user.id)
+    const myClassIds = (mine ?? []).map(r => r.class_id)
+
     const [{ data: cls }, { data: studs }, { data: bdgs }, { data: allSb }] = await Promise.all([
-      supabase.from('classes').select('*').eq('teacher_id', user.id).order('name'),
-      supabase.from('profiles').select('*').eq('teacher_id', user.id).eq('role', 'student').order('student_number').order('name'),
+      myClassIds.length
+        ? supabase.from('classes').select('*').in('id', myClassIds).order('name')
+        : Promise.resolve({ data: [] as Class[] }),
+      myClassIds.length
+        ? supabase.from('profiles').select('*').eq('role', 'student').in('class_id', myClassIds)
+            .order('student_number').order('name')
+        : Promise.resolve({ data: [] as Profile[] }),
       supabase.from('badges').select('*').eq('teacher_id', user.id).order('created_at'),
       supabase.from('student_badges').select('id, student_id, badge_id').eq('awarded_by', user.id),
     ])
@@ -315,7 +326,14 @@ export default function StudentsPage() {
           <Card className="border-dashed m-6">
             <CardContent className="py-12 text-center">
               <Users className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-              <p className="text-gray-500">학생이 없습니다</p>
+              <p className="text-gray-500">
+                {classes.length === 0 ? '담당하는 반이 없습니다' : '학생이 없습니다'}
+              </p>
+              {classes.length === 0 && (
+                <p className="text-gray-400 text-sm mt-1">
+                  반 관리에서 담당할 반을 먼저 고르세요. 담당하면 그 반 학생이 모두 보입니다.
+                </p>
+              )}
             </CardContent>
           </Card>
         ) : (

@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { toast } from 'sonner'
 import { Plus, Trash2, Reply, Search, Inbox, Send, MessageCircle, X } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
+import { usePoll, MESSAGE_POLL_MS } from '@/lib/use-poll'
 
 interface Message {
   id: string
@@ -31,8 +32,9 @@ type Tab = 'inbox' | 'sent'
 export default function StudentMessagesPage() {
   const supabase = createClient()
   const [me, setMe] = useState('')
-  const [teacherId, setTeacherId] = useState('')
-  const [teacherName, setTeacherName] = useState('')
+  // 담임 한 명이 아니라 내 반을 담당하는 교사 전원을 상대로 삼는다.
+  const [teachers, setTeachers] = useState<{ id: string; name: string; kind: string }[]>([])
+  const [teacherId, setTeacherId] = useState('')   // 지금 보고 있는 대화 상대
   const [tab, setTab] = useState<Tab>('inbox')
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
@@ -66,33 +68,33 @@ export default function StudentMessagesPage() {
       if (!user) return
       setMe(user.id)
 
-      const { data: profile } = await supabase.from('profiles').select('teacher_id').eq('id', user.id).single()
-      if (!profile?.teacher_id) { setLoading(false); return }
+      // 내 반에 배정된 교사만 나온다 (class_teachers 기준, 담임이 먼저)
+      const { data: list } = await supabase.rpc('my_teachers')
+      const rows = (list ?? []) as { id: string; name: string; kind: string }[]
+      setTeachers(rows)
+      if (rows.length === 0) { setLoading(false); return }
 
-      const { data: teacher } = await supabase.from('profiles').select('id, name').eq('id', profile.teacher_id).single()
-      const tId = teacher?.id ?? ''
+      const tId = rows[0].id
       setTeacherId(tId)
-      setTeacherName(teacher?.name ?? '선생님')
-
       await fetchData(user.id, tId)
       setLoading(false)
     }
     init()
   }, [supabase, fetchData])
 
-  // Realtime
+  // 대화 상대를 바꾸면 그 교사와의 쪽지만 다시 읽는다
   useEffect(() => {
     if (!me || !teacherId) return
-    const channel = supabase
-      .channel(`student-msg-${me}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'messages',
-        filter: `receiver_id=eq.${me}`,
-      }, () => { fetchData(me, teacherId) })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [me, teacherId, supabase, fetchData])
+    fetchData(me, teacherId)
+  }, [me, teacherId, fetchData])
 
+  // 새 쪽지 확인 — 실시간 구독 대신 주기적으로 다시 읽는다.
+  // (Realtime 서버는 윈도우 빌드가 없어 교내 서버에 띄울 수 없다)
+  usePoll(() => {
+    if (me && teacherId) fetchData(me, teacherId)
+  }, MESSAGE_POLL_MS, Boolean(me && teacherId))
+
+  const teacherName = teachers.find(t => t.id === teacherId)?.name ?? '선생님'
   const inbox = messages.filter(m => m.receiver_id === me)
   const sent = messages.filter(m => m.sender_id === me)
   const unreadCount = inbox.filter(m => !m.is_read).length
@@ -158,7 +160,8 @@ export default function StudentMessagesPage() {
     <div className="flex-1 flex items-center justify-center">
       <div className="text-center">
         <MessageCircle className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-        <p className="text-gray-500 text-sm">담당 선생님 정보가 없습니다.</p>
+        <p className="text-gray-500 text-sm">아직 우리 반을 담당하는 선생님이 없습니다.</p>
+        <p className="text-gray-400 text-xs mt-1">선생님이 반을 담당하면 쪽지를 주고받을 수 있습니다.</p>
       </div>
     </div>
   )
@@ -174,6 +177,24 @@ export default function StudentMessagesPage() {
               <Plus className="w-3.5 h-3.5" />새 쪽지
             </Button>
           </div>
+          {teachers.length > 1 && (
+            <div className="space-y-1">
+              <p className="text-xs text-gray-400">선생님 선택</p>
+              <div className="flex flex-wrap gap-1">
+                {teachers.map(t => (
+                  <button key={t.id} type="button" onClick={() => setTeacherId(t.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                      teacherId === t.id
+                        ? 'bg-green-600 text-white border-green-600'
+                        : 'bg-white text-gray-600 border-gray-300 hover:border-green-400'
+                    }`}>
+                    {t.name}
+                    {t.kind === 'homeroom' && <span className="ml-1 opacity-70">담임</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex gap-1">
             <button onClick={() => setTab('inbox')}
               className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === 'inbox' ? 'bg-green-50 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}>

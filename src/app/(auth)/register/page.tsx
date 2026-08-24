@@ -15,7 +15,8 @@ export default function RegisterPage() {
   const router = useRouter()
   const [step, setStep] = useState<'code' | 'info'>('code')
   const [inviteCode, setInviteCode] = useState('')
-  const [classInfo, setClassInfo] = useState<{ id: string; name: string; teacherId: string } | null>(null)
+  const [inviteKind, setInviteKind] = useState<'student' | 'teacher'>('student')
+  const [className, setClassName] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [studentNumber, setStudentNumber] = useState('')
   const [email, setEmail] = useState('')
@@ -29,17 +30,18 @@ export default function RegisterPage() {
       // 렌더 시점이 아니라 실제 조회 시점에 클라이언트를 만든다.
       // 이 페이지는 빌드 때 정적 생성되므로, 본문에서 만들면 환경변수 없이 빌드가 깨진다.
       const supabase = createClient()
-      const { data, error } = await supabase
-        .from('invite_codes')
-        .select('id, class_id, teacher_id, is_active, expires_at, max_uses, used_count, classes(name)')
-        .eq('code', inviteCode.toUpperCase().trim())
-        .single()
-      if (error || !data) throw new Error('유효하지 않은 초대코드입니다.')
-      if (!data.is_active) throw new Error('만료된 초대코드입니다.')
-      if (data.expires_at && new Date(data.expires_at) < new Date()) throw new Error('만료된 초대코드입니다.')
-      if (data.used_count >= data.max_uses) throw new Error('초대코드 사용 한도에 도달했습니다.')
-      const cls = data.classes as unknown as { name: string }
-      setClassInfo({ id: data.class_id, name: cls.name, teacherId: data.teacher_id })
+      // invite_codes 를 직접 조회하지 않는다. 그러면 활성 코드 목록이 전부
+      // 열거되어 모르는 사람이 아무 반에나 들어올 수 있다.
+      // 유효기간·사용한도 확인과 반 이름 조회를 이 함수 하나가 처리한다.
+      const { data, error } = await supabase.rpc('verify_invite_code', {
+        p_code: inviteCode.toUpperCase().trim(),
+      })
+      if (error) throw new Error('코드 확인 중 오류가 발생했습니다.')
+      const row = Array.isArray(data) ? data[0] : data
+      if (!row) throw new Error('유효하지 않거나 사용할 수 없는 초대코드입니다.')
+      // 교사용 코드는 반이 없다. 역할은 코드가 정하고 화면은 표시만 한다.
+      setInviteKind(row.kind === 'teacher' ? 'teacher' : 'student')
+      setClassName(row.class_name ?? null)
       setStep('info')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '코드 확인에 실패했습니다.')
@@ -50,7 +52,6 @@ export default function RegisterPage() {
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
-    if (!classInfo) return
     setLoading(true)
     try {
       const supabase = createClient()
@@ -58,24 +59,18 @@ export default function RegisterPage() {
       if (authError) throw authError
       if (!authData.user) throw new Error('회원가입 실패')
 
-      // teacher_id 는 초대코드에서 가져온다. 이 값이 없으면 교사 화면의
-      // 학생 목록(teacher_id 기준 조회)에 이 학생이 나타나지 않는다.
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: authData.user.id,
-        email,
-        name,
-        role: 'student',
-        class_id: classInfo.id,
-        teacher_id: classInfo.teacherId,
-        student_number: studentNumber || null,
+      // profiles 에 직접 넣지 않는다. 그러면 호출자가 역할을 정할 수 있어
+      // 누구나 스스로 교사·관리자가 될 수 있다. 역할은 초대코드가 정한다.
+      // 프로필 생성과 사용횟수 증가를 이 함수가 함께 처리한다.
+      const { error: regError } = await supabase.rpc('register_with_invite', {
+        p_code: inviteCode.toUpperCase().trim(),
+        p_name: name,
+        p_student_number: studentNumber || null,
       })
-      if (profileError) throw profileError
-
-      // 초대코드 사용 횟수 증가
-      await supabase.rpc('increment_invite_code', { code: inviteCode.toUpperCase().trim() })
+      if (regError) throw new Error(regError.message)
 
       toast.success('회원가입이 완료되었습니다!')
-      router.push('/student/dashboard')
+      router.push(inviteKind === 'teacher' ? '/teacher/dashboard' : '/student/dashboard')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '회원가입에 실패했습니다.')
     } finally {
@@ -91,7 +86,7 @@ export default function RegisterPage() {
             <GraduationCap className="w-8 h-8 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-gray-900">에듀폼</h1>
-          <p className="text-gray-500 mt-1">학생 회원가입</p>
+          <p className="text-gray-500 mt-1">초대코드로 가입</p>
         </div>
 
         <Card className="shadow-lg">
@@ -102,7 +97,7 @@ export default function RegisterPage() {
             <CardDescription>
               {step === 'code'
                 ? '선생님으로부터 받은 초대코드를 입력하세요'
-                : `${classInfo?.name} 반에 가입합니다`}
+                : inviteKind === 'teacher' ? '교사로 가입합니다' : `${className} 반에 가입합니다`}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -127,16 +122,18 @@ export default function RegisterPage() {
             ) : (
               <form onSubmit={handleRegister} className="space-y-4">
                 <div className="p-3 bg-green-50 rounded-lg text-sm text-green-700 border border-green-200">
-                  ✓ <strong>{classInfo?.name}</strong> 반 확인 완료
+                  ✓ {inviteKind === 'teacher' ? <><strong>교사</strong> 가입 코드 확인 완료</> : <><strong>{className}</strong> 반 확인 완료</>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="name">이름</Label>
                   <Input id="name" placeholder="홍길동" value={name} onChange={e => setName(e.target.value)} required />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="studentNumber">학번 (선택)</Label>
-                  <Input id="studentNumber" placeholder="예: 20101" value={studentNumber} onChange={e => setStudentNumber(e.target.value)} />
-                </div>
+                {inviteKind === 'student' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="studentNumber">학번 (선택)</Label>
+                    <Input id="studentNumber" placeholder="예: 20101" value={studentNumber} onChange={e => setStudentNumber(e.target.value)} />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="email">이메일</Label>
                   <Input id="email" type="email" placeholder="student@email.com" value={email} onChange={e => setEmail(e.target.value)} required />

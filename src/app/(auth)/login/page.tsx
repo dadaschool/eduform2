@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
 import { BookOpen, GraduationCap } from 'lucide-react'
+import { routeForRole } from '@/lib/route-for-role'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -29,8 +30,9 @@ export default function LoginPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('로그인 실패')
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-      if (profile?.role === 'teacher') router.push('/teacher/dashboard')
-      else router.push('/student/dashboard')
+      // 보낼 곳은 routeForRole 한 곳에서 정한다. 역할을 빼먹으면 레이아웃끼리
+      // 서로 밀어내 무한 리다이렉트가 된다.
+      router.push(profile ? routeForRole(profile.role) : '/student/dashboard')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '로그인에 실패했습니다.')
     } finally {

@@ -49,6 +49,11 @@
 }
 
 :root {
+  /* 기기에 이미 있는 글꼴만 쓴다. 웹폰트를 받아오면 교내 서버에서 빌드할 때
+     바깥 인터넷이 필요해지고, 막혀 있으면 빌드가 통째로 실패한다.
+     한글은 Segoe UI 에 글리프가 없어 맑은 고딕으로 자동 넘어간다. */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', '맑은 고딕',
+    'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

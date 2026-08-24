@@ -100,6 +100,7 @@ const FNS = [
   ['is_my_assessment_item', { p_item_id: NIL }],
   ['is_assignment_for_my_class', { p_assignment_id: NIL }],
   ['increment_invite_code', { code: '__doctor_probe__' }],
+  ['verify_invite_code', { p_code: '__doctor_probe__' }],
 ]
 const noFn = []
 for (const [fn, args] of FNS) {
@@ -110,7 +111,7 @@ for (const [fn, args] of FNS) {
   })
   if (res.status === 404) noFn.push(fn)
 }
-if (noFn.length === 0) console.log(ok('6개 전부 있음'))
+if (noFn.length === 0) console.log(ok(`${FNS.length}개 전부 있음`))
 else fail(`없는 함수: ${noFn.join(', ')}`, 'supabase/schema.sql 을 (다시) 실행하세요')
 
 // ─────────────────────────────────────────────
@@ -154,17 +155,35 @@ console.log(head('7. AI 키'))
 if (!hasGemini && !hasUpstage) {
   console.log(warn('건너뜀 (키 없음)'))
 } else {
+  // 교내 서버는 바깥으로 나가는 통신이 막혀 있을 수 있다. 그때 방화벽이 패킷을
+  // 버리면 fetch 가 2분 넘게 멈춰 있고, DNS 가 안 되면 예외가 그대로 터져 나와
+  // 아래 요약이 아예 출력되지 않는다. 시간을 끊고 예외를 받아 둔다.
+  const tryFetch = async (url, init) => {
+    try {
+      return { res: await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }) }
+    } catch (err) {
+      const name = err instanceof Error ? err.name : ''
+      const timedOut = name === 'TimeoutError' || name === 'AbortError'
+      return { err: timedOut ? '15초 안에 응답 없음' : err instanceof Error ? err.message : String(err) }
+    }
+  }
+  const blocked = () => {
+    console.log(warn('바깥 인터넷이 막혀 있는 것 같습니다 — AI 기능만 동작하지 않습니다'))
+    todo.push('AI 기능을 쓰려면 generativelanguage.googleapis.com / api.upstage.ai 로 나가는 통신을 열어야 합니다')
+  }
+
   if (hasUpstage) {
-    const res = await fetch('https://api.upstage.ai/v1/chat/completions', {
+    const { res, err } = await tryFetch('https://api.upstage.ai/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.UPSTAGE_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'solar-pro3', messages: [{ role: 'user', content: 'ok' }] }),
     })
-    if (res.ok) console.log(ok('업스테이지 정상'))
+    if (err) { console.log(bad(`업스테이지 연결 실패 — ${err}`)); blocked() }
+    else if (res.ok) console.log(ok('업스테이지 정상'))
     else console.log(bad(`업스테이지 HTTP ${res.status} — ${(await res.text()).slice(0, 120)}`))
   }
   if (hasGemini) {
-    const res = await fetch(
+    const { res, err } = await tryFetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
       {
         method: 'POST',
@@ -172,7 +191,8 @@ if (!hasGemini && !hasUpstage) {
         body: JSON.stringify({ contents: [{ parts: [{ text: 'ok' }] }] }),
       }
     )
-    if (res.ok) console.log(ok('Gemini 정상'))
+    if (err) { console.log(bad(`Gemini 연결 실패 — ${err}`)); if (!hasUpstage) blocked() }
+    else if (res.ok) console.log(ok('Gemini 정상'))
     else {
       const body = await res.text()
       console.log(warn(`Gemini HTTP ${res.status} — ${body.includes('limit: 0') ? '무료등급 할당량 0' : body.slice(0, 90)}`))

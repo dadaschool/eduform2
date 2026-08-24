@@ -1,82 +1,147 @@
+#!/usr/bin/env node
 /**
- * 자체호스팅 Supabase 용 비밀값 생성기.
+ * 자체 호스팅용 키 생성기.
  *
- *   node scripts/selfhost-keys.mjs
+ * Supabase 를 학교 서버에 직접 띄우면 클라우드 대시보드가 없으니
+ * anon / service_role 키를 직접 만들어야 한다. 두 키는 JWT_SECRET 으로
+ * HS256 서명한 JWT 이고, 서명이 어긋나면 모든 요청이 401 로 떨어진다.
  *
- * 클라우드 Supabase 는 키를 발급해 주지만, 직접 띄울 때는 만들어야 한다.
- * ANON_KEY 와 SERVICE_ROLE_KEY 는 JWT_SECRET 으로 서명한 JWT 이고,
- * 셋의 아귀가 맞지 않으면 PostgREST 가 모든 요청을 401 로 거절한다.
+ *   node scripts/selfhost-keys.mjs            키 한 세트 생성
+ *   node scripts/selfhost-keys.mjs --selftest 서명 로직 검증
  *
- * 출력값은 화면에만 표시한다. 파일로 저장하지 않으니 직접 옮겨 담아야 한다.
+ * 출력된 값은 화면에만 나온다. 파일로 저장하지 않는다.
  */
 import { createHmac, randomBytes } from 'node:crypto'
 
 const b64url = (buf) =>
   Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
-function signJwt(payload, secret) {
-  const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
+const b64urlDecode = (s) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()
+
+/** HS256 JWT. */
+function sign(payload, secret) {
+  const head = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   const body = b64url(JSON.stringify(payload))
-  const data = `${header}.${body}`
-  const sig = b64url(createHmac('sha256', secret).update(data).digest())
-  return `${data}.${sig}`
+  const sig = b64url(createHmac('sha256', secret).update(`${head}.${body}`).digest())
+  return `${head}.${body}.${sig}`
 }
 
-/** 검증용 — 서명이 실제로 맞는지 다시 계산해 본다. */
-export function verifyJwt(token, secret) {
-  const [h, b, s] = token.split('.')
-  if (!h || !b || !s) return null
-  const expected = b64url(createHmac('sha256', secret).update(`${h}.${b}`).digest())
-  if (expected !== s) return null
-  return JSON.parse(Buffer.from(b.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString())
-}
+const YEARS = 10
 
-export function generate({ years = 10, now = Math.floor(Date.now() / 1000) } = {}) {
-  // JWT_SECRET 은 40자 이상이어야 한다 (GoTrue 요구사항).
-  const jwtSecret = randomBytes(32).toString('hex') // 64자
-  const exp = now + years * 365 * 24 * 60 * 60
-
-  const anonKey = signJwt({ role: 'anon', iss: 'supabase', iat: now, exp }, jwtSecret)
-  const serviceKey = signJwt({ role: 'service_role', iss: 'supabase', iat: now, exp }, jwtSecret)
-
+/** 키 한 세트. secret 을 주면 그 값으로 서명한다 (테스트용). */
+function makeKeys(secret = alnum(48), now = Date.now()) {
+  const iat = Math.floor(now / 1000)
+  const exp = iat + YEARS * 365 * 24 * 60 * 60
   return {
-    jwtSecret,
-    anonKey,
-    serviceKey,
-    // 특수문자를 뺀다. DB URL 에 그대로 들어가는데 @ : / 가 있으면 URL 인코딩이 필요해진다.
-    postgresPassword: randomBytes(24).toString('base64url').replace(/[^A-Za-z0-9]/g, '').slice(0, 28),
-    dashboardPassword: randomBytes(12).toString('base64url').replace(/[^A-Za-z0-9]/g, '').slice(0, 16),
-    secretKeyBase: randomBytes(32).toString('hex'),
-    vaultEncKey: randomBytes(16).toString('hex'), // 정확히 32자여야 한다
-    expiresAt: new Date(exp * 1000).toISOString().slice(0, 10),
+    jwtSecret: secret,
+    anonKey: sign({ role: 'anon', iss: 'supabase', iat, exp }, secret),
+    serviceKey: sign({ role: 'service_role', iss: 'supabase', iat, exp }, secret),
   }
 }
 
-// 직접 실행했을 때만 출력한다 (import 시에는 조용히)
-if (process.argv[1] && process.argv[1].endsWith('selfhost-keys.mjs')) {
-  const k = generate()
-  console.log(`
-자체호스팅 Supabase 비밀값이 생성되었습니다. (키 만료: ${k.expiresAt})
-
-selfhost/.env 에 넣으세요
-─────────────────────────────────────────────────────────
-POSTGRES_PASSWORD=${k.postgresPassword}
-JWT_SECRET=${k.jwtSecret}
-ANON_KEY=${k.anonKey}
-SERVICE_ROLE_KEY=${k.serviceKey}
-SECRET_KEY_BASE=${k.secretKeyBase}
-VAULT_ENC_KEY=${k.vaultEncKey}
-DASHBOARD_PASSWORD=${k.dashboardPassword}
-
-앱의 .env.local 에 넣으세요
-─────────────────────────────────────────────────────────
-NEXT_PUBLIC_SUPABASE_URL=http://내부서버주소:8000
-NEXT_PUBLIC_SUPABASE_ANON_KEY=${k.anonKey}
-SUPABASE_SERVICE_ROLE_KEY=${k.serviceKey}
-
-⚠ 이 값들은 다시 볼 수 없습니다. 지금 옮겨 담으세요.
-⚠ SERVICE_ROLE_KEY 는 보안규칙(RLS)을 무시하는 관리자 키입니다.
-   서버에만 두고 브라우저·깃·채팅에 절대 넣지 마세요.
-⚠ 이미 운영 중인 DB 가 있다면 JWT_SECRET 을 바꾸는 순간 기존 키가 전부 무효가 됩니다.
-`)
+// base64 는 특수문자가 섞여 .env / 접속문자열에서 깨지므로 영숫자만 쓴다
+function alnum(n) {
+  const cs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  return Array.from(randomBytes(n), (b) => cs[b % cs.length]).join('')
 }
+
+function selftest() {
+  let pass = 0, fail = 0
+  const check = (label, cond, detail = '') => {
+    if (cond) { console.log(`  OK   ${label}`); pass++ }
+    else { console.log(`  FAIL ${label}${detail ? ` — ${detail}` : ''}`); fail++ }
+  }
+
+  // 1. HMAC-SHA256 자체가 맞는지. RFC 4231 공식 시험값.
+  check('RFC 4231 case 1',
+    createHmac('sha256', Buffer.alloc(20, 0x0b)).update('Hi There').digest('hex') ===
+    'b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7')
+  check('RFC 4231 case 2',
+    createHmac('sha256', 'Jefe').update('what do ya want for nothing?').digest('hex') ===
+    '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843')
+
+  // 2. base64url — URL 에 못 쓰는 문자가 남으면 게이트웨이가 키를 잘라 읽는다
+  const enc = b64url('?~??+/=')
+  check('base64url 문자 제한', !/[+/=]/.test(enc), enc)
+  check('base64url 왕복', b64urlDecode(b64url('{"role":"anon"}')) === '{"role":"anon"}')
+
+  // 3. 헤더는 Supabase 가 기대하는 고정 문자열이어야 한다
+  const { jwtSecret, anonKey, serviceKey } = makeKeys('test-secret-at-least-32-characters-long!!', 1700000000000)
+  check('JWT 헤더', anonKey.split('.')[0] === 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', anonKey.split('.')[0])
+
+  // 4. 서명 검증 — 같은 비밀로는 통과, 다른 비밀로는 실패해야 한다
+  const verify = (token, secret) => {
+    const [h, b, s] = token.split('.')
+    return b64url(createHmac('sha256', secret).update(`${h}.${b}`).digest()) === s
+  }
+  check('올바른 비밀로 검증 통과', verify(anonKey, jwtSecret))
+  check('다른 비밀은 검증 실패', !verify(anonKey, jwtSecret + 'x'))
+  check('한 글자 위조는 검증 실패',
+    !verify(anonKey.slice(0, -1) + (anonKey.at(-1) === 'A' ? 'B' : 'A'), jwtSecret))
+
+  // 5. payload 내용 — role 이 틀리면 권한이 통째로 잘못 붙는다
+  const anon = JSON.parse(b64urlDecode(anonKey.split('.')[1]))
+  const svc = JSON.parse(b64urlDecode(serviceKey.split('.')[1]))
+  check('anon role', anon.role === 'anon', anon.role)
+  check('service_role role', svc.role === 'service_role', svc.role)
+  check('iss', anon.iss === 'supabase', anon.iss)
+  check('만료가 미래', anon.exp > Math.floor(Date.now() / 1000), String(anon.exp))
+  check('만료가 10년 뒤', anon.exp - anon.iat === YEARS * 365 * 24 * 60 * 60)
+  check('두 키는 서로 다르다', anonKey !== serviceKey)
+
+  // 6. 비밀은 GoTrue 최소 길이(32)를 넘어야 한다
+  check('생성 비밀 길이 >= 32', makeKeys().jwtSecret.length >= 32)
+  check('생성 비밀은 영숫자만', /^[A-Za-z0-9]+$/.test(makeKeys().jwtSecret))
+
+  console.log(`\n${pass} 통과, ${fail} 실패`)
+  process.exit(fail === 0 ? 0 : 1)
+}
+
+if (process.argv.includes('--selftest')) selftest()
+
+// --- 새 키 세트 ---
+const { jwtSecret, anonKey, serviceKey } = makeKeys()
+const pgPassword = alnum(32)
+const authPassword = alnum(32)
+const host = process.env.EDUFORM_HOST || '<서버IP>'
+
+console.log(`
+================================================================
+  1) Postgres 비밀번호 정하기 — psql 에서 한 번만
+================================================================
+alter user postgres with password '${pgPassword}';
+alter role authenticator with password '${authPassword}';
+
+================================================================
+  2) C:\\srv\\eduform\\.env.local   (에듀폼)
+================================================================
+NEXT_PUBLIC_SUPABASE_URL=http://${host}:3000
+NEXT_PUBLIC_SUPABASE_ANON_KEY=${anonKey}
+SUPABASE_SERVICE_ROLE_KEY=${serviceKey}
+SUPABASE_JWT_SECRET=${jwtSecret}
+AUTH_DB_URL=postgresql://postgres:${pgPassword}@127.0.0.1:5432/postgres
+POSTGREST_URL=http://127.0.0.1:3001
+
+================================================================
+  3) C:\\srv\\postgrest\\postgrest.conf   (데이터 API)
+================================================================
+db-uri = "postgres://authenticator:${authPassword}@127.0.0.1:5432/postgres"
+db-schemas = "public"
+db-anon-role = "anon"
+db-pool = 10
+jwt-secret = "${jwtSecret}"
+server-host = "127.0.0.1"
+server-port = 3001
+
+================================================================
+  주의
+================================================================
+- NEXT_PUBLIC_SUPABASE_URL 의 <서버IP> 는 학생·교사 기기에서 접속할 주소다.
+  localhost 로 두면 서버 컴퓨터에서만 로그인된다.
+  EDUFORM_HOST=10.91.10.127 npm run selfhost:keys 처럼 지정하면 채워서 출력한다.
+- jwt-secret 과 SUPABASE_JWT_SECRET 은 «같은 값» 이어야 한다. 어긋나면
+  모든 데이터 요청이 401 로 떨어진다. 위 출력은 이미 같게 맞춰져 있다.
+- SERVICE_ROLE_KEY 는 RLS 를 무시한다. 깃·채팅·학생 기기에 절대 넣지 않는다.
+- PostgREST 와 Postgres 는 127.0.0.1 에만 붙는다. 바깥에 열 포트는 3000 뿐이다.
+- 이 값들을 잃어버리면 DB 접속과 로그인이 모두 막힌다. 지금 안전한 곳에 옮겨둔다.
+`)

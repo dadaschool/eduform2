@@ -29,12 +29,22 @@ const GEMINI_MODEL = 'gemini-2.0-flash-lite'
 const UPSTAGE_MODEL = 'solar-pro3'
 const UPSTAGE_ENDPOINT = 'https://api.upstage.ai/v1/chat/completions'
 
+/**
+ * 제공자 한 곳당 제한 시간.
+ *
+ * 교내망처럼 바깥으로 나가는 통신이 막힌 곳에서는 방화벽이 거절 응답을 주지 않고
+ * 패킷을 그냥 버린다. 그러면 fetch 가 OS 의 TCP 대기 시간(윈도우는 2분 이상)만큼
+ * 멈춰 있고, 폴백까지 두 번 기다리면 화면이 4분 넘게 돌아간다.
+ * 여기서 끊어야 "AI 만 안 되고 나머지는 정상" 이 된다.
+ */
+const TIMEOUT_MS = 20_000
+
 async function generateWithGemini({ system, user }: GenerateOptions): Promise<string> {
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY 미설정')
 
   const genAI = new GoogleGenerativeAI(key)
-  const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
+  const model = genAI.getGenerativeModel({ model: GEMINI_MODEL }, { timeout: TIMEOUT_MS })
 
   const parts = system ? [{ text: system }, { text: user }] : [{ text: user }]
   const result = await model.generateContent(parts)
@@ -59,6 +69,7 @@ async function generateWithUpstage({ system, user }: GenerateOptions): Promise<s
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ model: UPSTAGE_MODEL, messages }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   })
 
   if (!res.ok) {
@@ -88,7 +99,14 @@ export async function generateText(opts: GenerateOptions): Promise<GenerateResul
       const text = provider === 'gemini' ? await generateWithGemini(opts) : await generateWithUpstage(opts)
       return { text, provider }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const raw = err instanceof Error ? err.message : String(err)
+      const name = err instanceof Error ? err.name : ''
+      // 시간 초과는 원문이 "The operation was aborted due to timeout" 처럼 나와
+      // 원인을 짐작하기 어렵다. 교내망에서 가장 흔한 실패라 따로 적어 준다.
+      const timedOut = name === 'TimeoutError' || name === 'AbortError' || /timeout|aborted/i.test(raw)
+      const message = timedOut
+        ? `${TIMEOUT_MS / 1000}초 안에 응답 없음 (바깥 인터넷이 막혀 있을 수 있습니다)`
+        : raw
       // 서버 로그에 남겨 어느 쪽이 왜 실패했는지 추적할 수 있게 한다.
       console.error(`[ai] ${provider} 실패: ${message}`)
       failures.push(`${provider}: ${message}`)

@@ -17,6 +17,12 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // ⚠ auth/v1 과 rest/v1 을 반드시 제외해야 한다.
+    //
+    // 교내 서버(윈도우) 설치에서는 이 앱이 곧 Supabase 주소다. 미들웨어가
+    // updateSession → getUser() 를 부르면 그 요청이 같은 서버의 /auth/v1/user
+    // 로 들어오고, 거기서 미들웨어가 또 돌아 무한히 반복된다. 실제로 서버가
+    // 멈춘다. 데이터 경로(rest/v1)도 세션 갱신이 필요 없어 함께 뺀다.
+    '/((?!auth/v1|rest/v1|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

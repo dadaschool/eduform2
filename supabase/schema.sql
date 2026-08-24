@@ -23,7 +23,10 @@ create table if not exists classes (
 create table if not exists invite_codes (
   id uuid primary key default uuid_generate_v4(),
   code text unique not null,
-  class_id uuid not null references classes(id) on delete cascade,
+  -- 교사용 코드는 반에 속하지 않으므로 비어 있을 수 있다
+  class_id uuid references classes(id) on delete cascade,
+  -- 'student' 는 반에 학생을 넣는 코드, 'teacher' 는 교사 가입 코드(관리자만 발급)
+  role text not null default 'student' check (role in ('student', 'teacher')),
   teacher_id uuid not null references auth.users(id) on delete cascade,
   expires_at timestamptz,
   max_uses int default 100,
@@ -39,7 +42,7 @@ create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   name text not null,
-  role text not null check (role in ('teacher', 'student')),
+  role text not null check (role in ('admin', 'teacher', 'student')),
   class_id uuid references classes(id) on delete set null,
   student_number text,
   teacher_id uuid references auth.users(id) on delete set null,
@@ -211,6 +214,43 @@ create index if not exists messages_receiver_idx on messages(receiver_id, create
 create index if not exists messages_sender_idx on messages(sender_id, created_at desc);
 
 -- =============================================
+-- 반 ↔ 교사 (다대다)
+-- =============================================
+-- 한 반을 여러 교사가 담당한다. 예전에는 classes.teacher_id 로 반을 만든 교사
+-- 한 명이 독점했고, 그래서 같은 반을 교사마다 따로 만들어 이름이 겹치는 반이
+-- 생겼다. 교사가 볼 수 있는 학생의 범위도 이 표를 거쳐 정한다.
+create table if not exists class_teachers (
+  class_id   uuid not null references classes(id) on delete cascade,
+  teacher_id uuid not null references auth.users(id) on delete cascade,
+  role       text not null default 'subject' check (role in ('homeroom', 'subject')),
+  joined_at  timestamptz default now(),
+  primary key (class_id, teacher_id)
+);
+
+-- =============================================
+-- 기존 DB 마이그레이션
+-- =============================================
+-- create table if not exists 는 이미 있는 테이블을 고치지 않으므로,
+-- 컬럼·제약 변경은 여기서 따로 한다. 여러 번 실행해도 안전하다.
+
+-- role 에 admin 추가
+alter table profiles drop constraint if exists profiles_role_check;
+alter table profiles add constraint profiles_role_check
+  check (role in ('admin', 'teacher', 'student'));
+
+-- 초대코드에 용도 구분 추가. 교사용 코드는 반이 없으므로 class_id 를 비울 수 있어야 한다.
+alter table invite_codes add column if not exists role text not null default 'student';
+alter table invite_codes drop constraint if exists invite_codes_role_check;
+alter table invite_codes add constraint invite_codes_role_check
+  check (role in ('student', 'teacher'));
+alter table invite_codes alter column class_id drop not null;
+
+-- 기존 반 소유 관계를 담임으로 옮긴다 (한 번만 효과가 있고 재실행은 무해)
+insert into class_teachers (class_id, teacher_id, role)
+select id, teacher_id, 'homeroom' from classes
+on conflict (class_id, teacher_id) do nothing;
+
+-- =============================================
 -- RLS 정책
 -- =============================================
 alter table classes enable row level security;
@@ -228,6 +268,7 @@ alter table assignment_submissions enable row level security;
 alter table observations enable row level security;
 alter table student_record_drafts enable row level security;
 alter table messages enable row level security;
+alter table class_teachers enable row level security;
 
 -- 이 파일은 여러 번 실행해도 안전해야 한다.
 -- create policy 는 if not exists 를 지원하지 않으므로 기존 정책을 먼저 지운다.
@@ -334,22 +375,87 @@ as $$
   select exists (select 1 from profiles where id = auth.uid() and role = 'teacher')
 $$;
 
+create or replace function is_admin()
+returns boolean
+language sql security definer stable set search_path = public
+as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+$$;
+
+-- 내가 이 반을 담당하는가
+create or replace function is_my_class(p_class_id uuid)
+returns boolean
+language sql security definer stable set search_path = public
+as $$
+  select exists (
+    select 1 from class_teachers
+    where class_id = p_class_id and teacher_id = auth.uid()
+  )
+$$;
+
+-- 이 학생이 내가 담당하는 반에 있는가.
+-- 교사가 볼 수 있는 학생의 범위는 이제 profiles.teacher_id 가 아니라 반 소속으로 정한다.
+create or replace function is_my_student(p_student_id uuid)
+returns boolean
+language sql security definer stable set search_path = public
+as $$
+  select exists (
+    select 1 from profiles p
+    join class_teachers ct on ct.class_id = p.class_id
+    where p.id = p_student_id and ct.teacher_id = auth.uid()
+  )
+$$;
+
+-- 이 교사가 내(학생) 반을 담당하는가.
+-- 학생 화면에서 담당 교사 이름을 표시하고 쪽지 상대를 고를 때 쓴다.
+-- 예전에는 담임(profiles.teacher_id) 한 명만 볼 수 있어서, 교과 교사가
+-- 준 배지나 보낸 쪽지의 이름이 빈칸으로 나왔다.
+create or replace function is_my_class_teacher(p_teacher_id uuid)
+returns boolean
+language sql security definer stable set search_path = public
+as $$
+  select exists (
+    select 1
+    from profiles me
+    join class_teachers ct on ct.class_id = me.class_id
+    where me.id = auth.uid() and ct.teacher_id = p_teacher_id
+  )
+$$;
+
+-- 내 반을 담당하는 교사 목록. 담임을 먼저 보여준다.
+-- class_teachers 를 학생에게 직접 열지 않고 필요한 값만 돌려준다.
+create or replace function my_teachers()
+returns table (id uuid, name text, kind text)
+language sql security definer stable set search_path = public
+as $$
+  select p.id, p.name, ct.role
+  from profiles me
+  join class_teachers ct on ct.class_id = me.class_id
+  join profiles p on p.id = ct.teacher_id
+  where me.id = auth.uid()
+  order by (ct.role = 'homeroom') desc, p.name
+$$;
+
+grant execute on function my_teachers() to authenticated;
+
 -- 초대코드 검증. 가입 화면은 로그인 전에 코드를 확인해야 한다.
 -- invite_codes 를 직접 읽게 하면 활성 코드 목록이 전부 열거되어,
 -- 모르는 사람이 코드를 긁어 아무 반에나 학생으로 들어올 수 있다.
 -- 그래서 테이블 조회는 막고, 코드를 아는 사람에게만 필요한 값을 돌려준다.
 -- security definer 라서 classes 조회도 함께 되어 반 이름을 얻을 수 있다.
 -- (직접 임베드하면 classes 가 비로그인에 막혀 null 이 되고 가입이 실패한다)
-create or replace function verify_invite_code(p_code text)
-returns table (class_id uuid, class_name text, teacher_id uuid)
+-- 반환 타입이 바뀌므로 create or replace 로는 안 되고 먼저 지워야 한다
+drop function if exists verify_invite_code(text);
+create function verify_invite_code(p_code text)
+returns table (kind text, class_id uuid, class_name text, teacher_id uuid)
 language sql
 security definer
 stable
 set search_path = public
 as $$
-  select c.id, c.name, ic.teacher_id
+  select ic.role, ic.class_id, c.name, ic.teacher_id
   from invite_codes ic
-  join classes c on c.id = ic.class_id
+  left join classes c on c.id = ic.class_id   -- 교사용 코드는 반이 없다
   where ic.code = upper(trim(p_code))
     and ic.is_active
     and (ic.expires_at is null or ic.expires_at > now())
@@ -359,6 +465,102 @@ $$;
 -- 비로그인 상태에서 호출해야 하므로 anon 에게도 실행 권한을 준다.
 grant execute on function verify_invite_code(text) to anon, authenticated;
 
+
+-- 초대코드로 가입한다. 프로필 생성과 사용횟수 증가를 한 번에 처리한다.
+--
+-- 예전에는 화면에서 profiles 에 직접 insert 했고, 정책이 auth.uid() = id 만
+-- 검사해서 역할을 그대로 믿었다. 회원가입이 열려 있으므로 인터넷의 누구나
+-- 계정을 만든 뒤 스스로 role='teacher' 나 'admin' 을 넣을 수 있었다.
+-- 실제로 확인했다. 이제 역할은 초대코드가 정하고, 화면은 역할을 못 정한다.
+create or replace function register_with_invite(
+  p_code text,
+  p_name text,
+  p_student_number text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code   invite_codes;
+  v_uid    uuid := auth.uid();
+  v_email  text;
+begin
+  if v_uid is null then
+    raise exception '로그인 상태가 아닙니다. 회원가입 후 다시 시도하세요.';
+  end if;
+  if exists (select 1 from profiles where id = v_uid) then
+    raise exception '이미 가입된 계정입니다.';
+  end if;
+
+  select * into v_code from invite_codes
+  where code = upper(trim(p_code))
+    and is_active
+    and (expires_at is null or expires_at > now())
+    and used_count < max_uses
+  for update;
+
+  if not found then
+    raise exception '유효하지 않거나 사용할 수 없는 초대코드입니다.';
+  end if;
+
+  select email into v_email from auth.users where id = v_uid;
+
+  -- 역할은 코드가 정한다. 호출자가 지정할 수 없다.
+  insert into profiles (id, email, name, role, class_id, teacher_id, student_number)
+  values (
+    v_uid, v_email, p_name, v_code.role,
+    case when v_code.role = 'student' then v_code.class_id else null end,
+    case when v_code.role = 'student' then v_code.teacher_id else null end,
+    case when v_code.role = 'student' then p_student_number else null end
+  );
+
+  update invite_codes set used_count = used_count + 1 where id = v_code.id;
+end $$;
+
+grant execute on function register_with_invite(text, text, text) to authenticated;
+
+-- 교사 초대코드는 10분만 유효하다.
+--
+-- 코드가 유출되면 외부인이 교사가 되고, 교사는 아무 반에나 스스로 붙을 수
+-- 있으므로 전교생 명단이 노출된다. 그래서 쓸 수 있는 창을 최대한 좁힌다.
+-- 화면에서 expires_at 을 넣는 방식이면 값을 바꿔 우회할 수 있어 DB 에서 깎는다.
+-- 거부하지 않고 깎는 이유는, 무엇을 보내든 10분을 넘지 않게 하려는 것이다.
+create or replace function clamp_teacher_invite_expiry()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.role = 'teacher'
+     and (new.expires_at is null or new.expires_at > now() + interval '10 minutes') then
+    new.expires_at := now() + interval '10 minutes';
+  end if;
+  return new;
+end $$;
+
+-- 역할 변경은 관리자만. RLS 의 with check 로는 이전 값을 볼 수 없어 트리거로 막는다.
+-- security definer 를 쓰지 않는다. 그러면 current_user 가 호출자가 아니라
+-- 함수 소유자(postgres)가 되어 아래 검사가 통째로 무력화된다. 실제로 겪었다.
+-- is_admin() 이 security definer 이므로 권한은 그쪽에서 해결된다.
+create or replace function prevent_role_escalation()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  -- 클라이언트 경로(anon / authenticated)만 검사한다.
+  -- service_role 은 서버 라우트가 쓰는 경로이고, 이미 라우트에서 관리자인지
+  -- 검사한다. 여기서 함께 막으면 관리자 API 가 역할을 바꿀 수 없다.
+  if new.role is distinct from old.role
+     and current_user in ('anon', 'authenticated')
+     and not is_admin() then
+    raise exception '역할은 관리자만 변경할 수 있습니다.';
+  end if;
+  return new;
+end $$;
+
 -- profiles
 -- 역할만 보고 허용하면 아무 교사나 남의 학생까지 보고 고칠 수 있다.
 -- teacher_id 로 좁혀 자기가 담당한 학생만 다루게 한다.
@@ -366,30 +568,85 @@ grant execute on function verify_invite_code(text) to anon, authenticated;
 --  create-student API 양쪽 모두 teacher_id 를 채운다)
 create policy "profiles_select" on profiles for select using (
   auth.uid() = id
-  or teacher_id = auth.uid()
+  or (is_my_student(id) and is_teacher())   -- 내가 담당하는 반의 학생
+  or teacher_id = auth.uid()                -- 담임으로 등록된 학생 (반 배정 전이라도)
   -- 학생이 쪽지 발신자(선생님) 이름을 표시할 수 있어야 한다
   or id = current_user_teacher_id()
-);
-create policy "profiles_insert" on profiles for insert with check (auth.uid() = id);
-create policy "profiles_update" on profiles for update using (
-  auth.uid() = id
-  or (teacher_id = auth.uid() and is_teacher())
-);
-create policy "profiles_delete" on profiles for delete using (
-  teacher_id = auth.uid() and is_teacher()
+  or is_my_class_teacher(id)                -- 내 반을 담당하는 교사 전원
+  or is_admin()                             -- 관리자는 계정 관리를 위해 전체 조회
 );
 
+-- 직접 삽입 정책을 두지 않는다. 프로필은 register_with_invite() 나
+-- service_role(교사가 만드는 학생 계정)로만 만들어진다.
+-- auth.uid() = id 만 검사하면 역할을 호출자가 정할 수 있어,
+-- 누구나 스스로 교사나 관리자가 될 수 있었다.
+
+create policy "profiles_update" on profiles for update using (
+  auth.uid() = id
+  or (is_my_student(id) and is_teacher())
+  or (teacher_id = auth.uid() and is_teacher())
+  or is_admin()
+);
+create policy "profiles_delete" on profiles for delete using (
+  (teacher_id = auth.uid() and is_teacher())
+  or (is_my_student(id) and is_teacher())
+  or is_admin()
+);
+
+-- 역할 변경 차단 (위 prevent_role_escalation)
+drop trigger if exists profiles_role_guard on profiles;
+create trigger profiles_role_guard before update on profiles
+  for each row execute function prevent_role_escalation();
+
+-- 교사 초대코드 유효기간 제한 (위 clamp_teacher_invite_expiry)
+drop trigger if exists invite_codes_teacher_expiry on invite_codes;
+create trigger invite_codes_teacher_expiry before insert or update on invite_codes
+  for each row execute function clamp_teacher_invite_expiry();
+
 -- classes: 교사만 CRUD
-create policy "classes_all" on classes for all using (
-  auth.uid() = teacher_id and is_teacher()
+-- 교사는 학교의 모든 반을 조회한다. 목록에서 골라 담당하려면 보여야 한다.
+create policy "classes_teacher_select" on classes for select using (
+  is_teacher() or is_admin()
+);
+-- 반 목록은 관리자가 넣는다. 교사는 그 목록에서 담당할 반을 고른다.
+-- 교사도 만들 수 있게 남겨 둔다. 반이 없으면 학생을 넣을 수 없어 관리자가
+-- 자리에 없을 때 아무것도 시작할 수 없다. teacher_id 는 만든 사람 기록용이다.
+create policy "classes_insert" on classes for insert with check (
+  (auth.uid() = teacher_id and is_teacher()) or is_admin()
+);
+-- 수정은 담당 교사 또는 관리자
+create policy "classes_update" on classes for update using (
+  (is_my_class(id) and is_teacher()) or is_admin()
+);
+-- 삭제는 만든 교사 또는 관리자. 남이 담당 중인 반을 함부로 지우지 못하게 한다.
+create policy "classes_delete" on classes for delete using (
+  (auth.uid() = teacher_id and is_teacher()) or is_admin()
 );
 create policy "classes_student_select" on classes for select using (
   id = current_user_class_id()
 );
 
+-- class_teachers: 누가 어느 반을 담당하는지는 교사끼리 공유한다.
+-- 배정 추가·제거는 자기 자신만. 관리자는 전부 정리할 수 있다.
+create policy "class_teachers_select" on class_teachers for select using (
+  is_teacher() or is_admin()
+);
+create policy "class_teachers_insert" on class_teachers for insert with check (
+  (teacher_id = auth.uid() and is_teacher()) or is_admin()
+);
+create policy "class_teachers_delete" on class_teachers for delete using (
+  (teacher_id = auth.uid() and is_teacher()) or is_admin()
+);
+create policy "class_teachers_update" on class_teachers for update using (is_admin());
+
 -- invite_codes: 교사 관리
-create policy "invite_codes_teacher" on invite_codes for all using (
-  auth.uid() = teacher_id and is_teacher()
+-- 학생용 코드는 담당 교사가, 교사용 코드는 관리자만 발급한다.
+-- 교사용 코드가 유출되면 외부인이 교사가 되어 학생 명단에 접근하므로 더 조인다.
+create policy "invite_codes_manage" on invite_codes for all using (
+  case when invite_codes.role = 'teacher'
+       then is_admin()
+       else (auth.uid() = teacher_id and is_teacher()) or is_admin()
+  end
 );
 -- 학생용 조회 정책을 두지 않는다. 코드 확인은 verify_invite_code() 로만 한다.
 -- is_active = true 조건으로 열어두면 활성 코드 전체가 열거된다.
@@ -400,8 +657,11 @@ create policy "badges_teacher" on badges for all using (
 );
 -- using (true) 는 로그인하지 않은 사람에게도 배지 정의를 전부 보여준다.
 -- 학생은 자기 담당 교사의 배지만 알면 된다 (내 배지 화면의 badges 임베드).
+-- 담임뿐 아니라 내 반을 담당하는 교사가 만든 배지도 이름이 보여야 한다.
+-- 담임만 허용하면 교과 교사가 준 배지의 이름이 빈칸으로 나온다.
 create policy "badges_student_select" on badges for select using (
   teacher_id = current_user_teacher_id()
+  or is_my_class_teacher(teacher_id)
 );
 create policy "student_badges_teacher" on student_badges for all using (
   auth.uid() = awarded_by and is_teacher()

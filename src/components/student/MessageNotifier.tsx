@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { MessageCircle, X, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { formatDateTime } from '@/lib/utils'
+import { usePoll, MESSAGE_POLL_MS } from '@/lib/use-poll'
 
 interface UnreadMessage {
   id: string
@@ -21,58 +22,67 @@ export default function MessageNotifier({ userId }: { userId: string }) {
   const supabase = createClient()
   const router = useRouter()
   const initializedRef = useRef(false)
+  /** 이미 알린 쪽지 id. 폴링이 같은 쪽지를 반복해서 알리지 않게 한다. */
+  const seenRef = useRef<Set<string>>(new Set())
   const [unreadMessages, setUnreadMessages] = useState<UnreadMessage[]>([])
   const [modalOpen, setModalOpen] = useState(false)
 
+  /** 읽지 않은 쪽지를 가져온다. */
+  const fetchUnread = useCallback(async () => {
+    const { data } = await supabase
+      .from('messages')
+      .select('id, sender_id, subject, content, created_at, sender:profiles!sender_id(name)')
+      .eq('receiver_id', userId)
+      .eq('is_read', false)
+      .eq('deleted_by_receiver', false)
+      .order('created_at', { ascending: false })
+    return (data ?? []) as unknown as UnreadMessage[]
+  }, [supabase, userId])
+
+  // 로그인 직후 한 번 — 안 읽은 쪽지가 있으면 모달로 알린다
   useEffect(() => {
-    async function checkUnread() {
+    async function first() {
       if (initializedRef.current) return
       initializedRef.current = true
 
-      const { data } = await supabase
-        .from('messages')
-        .select('id, sender_id, subject, content, created_at, sender:profiles!sender_id(name)')
-        .eq('receiver_id', userId)
-        .eq('is_read', false)
-        .eq('deleted_by_receiver', false)
-        .order('created_at', { ascending: false })
-
-      if (data && data.length > 0) {
-        setUnreadMessages(data as unknown as UnreadMessage[])
+      const rows = await fetchUnread()
+      // 모달로 이미 보여 준 쪽지는 토스트로 다시 알리지 않는다
+      rows.forEach(m => seenRef.current.add(m.id))
+      if (rows.length > 0) {
+        setUnreadMessages(rows)
         setModalOpen(true)
       }
     }
-    checkUnread()
+    first()
+  }, [fetchUnread])
 
-    // Realtime: 새 쪽지 수신 (로그인 이후 실시간)
-    const channel = supabase
-      .channel(`msg-notifier-${userId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${userId}`,
-      }, async (payload) => {
-        const { data: sender } = await supabase
-          .from('profiles')
-          .select('name')
-          .eq('id', payload.new.sender_id)
-          .single()
+  // 그 뒤로는 주기적으로 확인한다.
+  // 실시간 구독을 쓰지 않는 이유: Realtime 서버는 윈도우 빌드가 없어
+  // 교내 서버에 띄울 수 없다. 즉시 대신 몇 초 지연으로 바꿨다.
+  usePoll(async () => {
+    const rows = await fetchUnread()
+    const fresh = rows.filter(m => !seenRef.current.has(m.id))
+    if (fresh.length === 0) return
 
-        const senderName = sender?.name ?? '선생님'
-        const subject = payload.new.subject ? ` [${payload.new.subject}]` : ''
+    fresh.forEach(m => seenRef.current.add(m.id))
 
-        toast(`${senderName}${subject}`, {
-          description: (payload.new.content as string).slice(0, 60) + ((payload.new.content as string).length > 60 ? '…' : ''),
-          icon: <MessageCircle className="w-4 h-4 text-green-500" />,
-          action: { label: '확인', onClick: () => router.push('/student/messages') },
-          duration: 8000,
-        })
+    // 한 번에 여러 개가 와도 토스트를 쌓지 않는다. 3개까지만 띄운다.
+    fresh.slice(0, 3).forEach(m => {
+      const senderName = m.sender?.name ?? '선생님'
+      const subject = m.subject ? ` [${m.subject}]` : ''
+      toast(`${senderName}${subject}`, {
+        description: m.content.slice(0, 60) + (m.content.length > 60 ? '…' : ''),
+        icon: <MessageCircle className="w-4 h-4 text-green-500" />,
+        action: { label: '확인', onClick: () => router.push('/student/messages') },
+        duration: 8000,
       })
-      .subscribe()
-
-    return () => { supabase.removeChannel(channel) }
-  }, [userId, supabase, router])
+    })
+    if (fresh.length > 3) {
+      toast(`새 쪽지 ${fresh.length}개`, {
+        action: { label: '쪽지함 열기', onClick: () => router.push('/student/messages') },
+      })
+    }
+  }, MESSAGE_POLL_MS)
 
   function handleGoToMessages() {
     setModalOpen(false)
