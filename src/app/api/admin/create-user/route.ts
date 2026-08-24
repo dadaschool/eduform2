@@ -18,8 +18,10 @@ export async function POST(req: Request) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '인증 필요' }, { status: 401 })
 
-    const { data: me } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
-    if (!me?.is_admin) return NextResponse.json({ error: '관리자만 등록할 수 있습니다' }, { status: 403 })
+    // select('*') — is_admin 이 없는 DB 에서도 조회가 실패하지 않아야 한다.
+    // 컬럼이 없으면 undefined 가 되어 «관리자 아님» 으로 안전하게 떨어진다.
+    const { data: me } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+    if (me?.is_admin !== true) return NextResponse.json({ error: '관리자만 등록할 수 있습니다' }, { status: 403 })
 
     const { name, email, password, role, classId, studentNumber } = await req.json()
 

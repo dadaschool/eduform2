@@ -19,14 +19,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  // select('*') 로 읽는다. 컬럼을 골라 쓰면 DB 에 is_admin 이 아직 없는 동안
+  // (스키마를 적용하기 전) 조회 자체가 실패해 «프로필이 없다» 로 보인다.
+  // 코드가 스키마보다 먼저 배포되는 일은 늘 생긴다.
   const { data: profile } = await supabase
-    .from('profiles').select('role, name, is_admin').eq('id', user.id).single()
+    .from('profiles').select('*').eq('id', user.id).single()
 
   // 프로필이 없으면 교사·학생 레이아웃끼리 서로 밀어내 무한 리다이렉트가 된다.
   // 여기서 끊고 무엇이 잘못됐는지 알려준다.
   if (!profile) return <NoProfileNotice email={user.email} />
   // 관리자는 role 이 아니라 is_admin 표시다. 같은 계정이 교사이기도 하다.
-  if (!profile.is_admin) redirect(routeForRole(profile.role))
+  if (profile.is_admin !== true) redirect(routeForRole(profile.role))
 
   return (
     <div className="flex h-screen bg-gray-50">
