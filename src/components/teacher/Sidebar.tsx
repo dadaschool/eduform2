@@ -14,6 +14,7 @@ import {
   Eye,
   Award,
   LogOut,
+  ShieldCheck,
   GraduationCap,
   School,
   MessageCircle,
@@ -33,9 +34,11 @@ const navItems = [
 
 interface SidebarProps {
   teacherName: string
+  /** 관리자를 겸하는 계정이면 전체 관리로 넘어가는 링크를 보여준다 */
+  isAdmin?: boolean
 }
 
-export default function Sidebar({ teacherName }: SidebarProps) {
+export default function Sidebar({ teacherName, isAdmin = false }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -83,10 +86,23 @@ export default function Sidebar({ teacherName }: SidebarProps) {
         })}
       </nav>
 
+      {/* 관리자 겸임 계정 — 계정·반 관리로 넘어간다 */}
+      {isAdmin && (
+        <div className="p-3 border-t border-gray-100">
+          <Link
+            href="/admin/users"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            전체 관리
+          </Link>
+        </div>
+      )}
+
       {/* 사용자 정보 + 로그아웃 */}
       <div className="p-3 border-t border-gray-100">
         <div className="px-3 py-2 mb-1">
-          <p className="text-xs text-gray-500">로그인 교사</p>
+          <p className="text-xs text-gray-500">로그인 교사{isAdmin && ' · 관리자'}</p>
           <p className="text-sm font-semibold text-gray-800 truncate">{teacherName}</p>
         </div>
         <button

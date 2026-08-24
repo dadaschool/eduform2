@@ -42,7 +42,9 @@ create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
   name text not null,
-  role text not null check (role in ('admin', 'teacher', 'student')),
+  role text not null check (role in ('teacher', 'student')),
+  -- 관리자는 «역할» 이 아니라 «표시» 다. 아래 마이그레이션 주석 참고.
+  is_admin boolean not null default false,
   class_id uuid references classes(id) on delete set null,
   student_number text,
   teacher_id uuid references auth.users(id) on delete set null,
@@ -233,10 +235,24 @@ create table if not exists class_teachers (
 -- create table if not exists 는 이미 있는 테이블을 고치지 않으므로,
 -- 컬럼·제약 변경은 여기서 따로 한다. 여러 번 실행해도 안전하다.
 
--- role 에 admin 추가
+-- 관리자를 «역할» 에서 «표시» 로 바꾼다.
+--
+-- 처음에는 role = 'admin' 으로 두었다. 그러니까 관리자가 된 순간 교사 화면이
+-- 전부 막혔다 — 평가·과제·관찰일지·학생부 초안이 모두 교사 전용이기 때문이다.
+-- 그런데 실제로는 «같은 사람» 이 관리자이면서 담임이다. 계정을 두 개 쓰게
+-- 만들 수는 없다. 그래서 role 은 teacher 로 두고 관리 권한만 따로 붙인다.
+--
+-- 다른 교사의 학생 기록은 여전히 보이지 않는다. is_admin() 을 쓰는 정책은
+-- 계정(profiles)·반(classes, class_teachers)·초대코드뿐이고, 기록 쪽
+-- (observations, assessments, student_record_drafts, messages) 정책에는 없다.
+alter table profiles add column if not exists is_admin boolean not null default false;
+
+-- 이미 role = 'admin' 인 계정이 있으면 교사 + 관리자로 옮긴다
+update profiles set is_admin = true, role = 'teacher' where role = 'admin';
+
 alter table profiles drop constraint if exists profiles_role_check;
 alter table profiles add constraint profiles_role_check
-  check (role in ('admin', 'teacher', 'student'));
+  check (role in ('teacher', 'student'));
 
 -- 초대코드에 용도 구분 추가. 교사용 코드는 반이 없으므로 class_id 를 비울 수 있어야 한다.
 alter table invite_codes add column if not exists role text not null default 'student';
@@ -379,7 +395,7 @@ create or replace function is_admin()
 returns boolean
 language sql security definer stable set search_path = public
 as $$
-  select exists (select 1 from profiles where id = auth.uid() and role = 'admin')
+  select coalesce((select p.is_admin from profiles p where p.id = auth.uid()), false)
 $$;
 
 -- 내가 이 반을 담당하는가
@@ -553,10 +569,14 @@ begin
   -- 클라이언트 경로(anon / authenticated)만 검사한다.
   -- service_role 은 서버 라우트가 쓰는 경로이고, 이미 라우트에서 관리자인지
   -- 검사한다. 여기서 함께 막으면 관리자 API 가 역할을 바꿀 수 없다.
-  if new.role is distinct from old.role
+  -- role 과 is_admin 을 함께 지킨다. is_admin 을 빼놓으면 자기 프로필을
+  -- 고칠 수 있는 사람이 스스로 관리자가 될 수 있다 (profiles_update 에
+  -- auth.uid() = id 가 있다).
+  if (new.role is distinct from old.role
+      or new.is_admin is distinct from old.is_admin)
      and current_user in ('anon', 'authenticated')
      and not is_admin() then
-    raise exception '역할은 관리자만 변경할 수 있습니다.';
+    raise exception '역할과 관리자 권한은 관리자만 변경할 수 있습니다.';
   end if;
   return new;
 end $$;

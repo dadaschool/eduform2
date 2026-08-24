@@ -9,7 +9,6 @@ import type { Role } from './types'
  */
 export function routeForRole(role: Role): string {
   switch (role) {
-    case 'admin': return '/admin/users'
     case 'teacher': return '/teacher/dashboard'
     case 'student': return '/student/dashboard'
   }

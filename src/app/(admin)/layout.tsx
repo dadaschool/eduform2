@@ -1,27 +1,32 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { ShieldCheck, Users, School, LogOut } from 'lucide-react'
+import { ShieldCheck, Users, School, LogOut, GraduationCap } from 'lucide-react'
 import NoProfileNotice from '@/components/NoProfileNotice'
 import { routeForRole } from '@/lib/route-for-role'
 
 /**
  * 관리자 영역.
  *
- * 관리자는 계정과 반만 관리한다. 학생 기록(관찰기록·생활기록부·평가결과)에는
- * 접근할 수 없다. 화면에서 막는 것이 아니라 DB 정책으로 막혀 있다.
+ * 관리자는 계정과 반만 관리한다. 다른 교사의 학생 기록(관찰기록·생활기록부·
+ * 평가결과)에는 접근할 수 없다. 화면에서 막는 것이 아니라 DB 정책으로 막혀 있다.
+ *
+ * 관리자는 role 이 아니라 profiles.is_admin 표시다. 같은 사람이 관리자이면서
+ * 담임이므로, 이 계정으로 교사 화면도 그대로 쓸 수 있다.
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const { data: profile } = await supabase.from('profiles').select('role, name').eq('id', user.id).single()
+  const { data: profile } = await supabase
+    .from('profiles').select('role, name, is_admin').eq('id', user.id).single()
 
   // 프로필이 없으면 교사·학생 레이아웃끼리 서로 밀어내 무한 리다이렉트가 된다.
   // 여기서 끊고 무엇이 잘못됐는지 알려준다.
   if (!profile) return <NoProfileNotice email={user.email} />
-  if (profile.role !== 'admin') redirect(routeForRole(profile.role))
+  // 관리자는 role 이 아니라 is_admin 표시다. 같은 계정이 교사이기도 하다.
+  if (!profile.is_admin) redirect(routeForRole(profile.role))
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -33,7 +38,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </div>
             <div className="min-w-0">
               <p className="text-sm font-bold text-gray-900 truncate">{profile.name}</p>
-              <p className="text-xs text-gray-500">전체 관리자</p>
+              <p className="text-xs text-gray-500">관리자 · 교사</p>
             </div>
           </div>
         </div>
@@ -47,6 +52,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <Users className="w-4 h-4" />사용자 관리
           </Link>
         </nav>
+        {/* 같은 계정이 교사이기도 하다. 수업 화면으로 바로 넘어갈 수 있어야 한다. */}
+        <div className="p-2 border-t">
+          <Link href="/teacher/dashboard"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100">
+            <GraduationCap className="w-4 h-4" />교사 화면으로
+          </Link>
+        </div>
         <div className="p-2 border-t">
           <Link href="/login"
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-100">

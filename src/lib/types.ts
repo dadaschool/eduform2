@@ -1,4 +1,9 @@
-export type Role = 'admin' | 'teacher' | 'student'
+/**
+ * 관리자는 role 이 아니라 profiles.is_admin 표시다.
+ * role='admin' 으로 두면 관리자가 교사 화면을 쓸 수 없어졌다 — 같은 사람이
+ * 관리자이면서 담임이므로 둘을 겹칠 수 있어야 한다.
+ */
+export type Role = 'teacher' | 'student'
 
 export type CheckType = 'ox' | 'level3' | 'status3' | 'number' | 'score5' | 'text'
 
@@ -25,6 +30,8 @@ export interface Profile {
   email: string | null
   name: string
   role: Role
+  /** 계정·반 관리 권한. 교사 역할과 겹칠 수 있다. */
+  is_admin: boolean
   class_id: string | null
   student_number: string | null
   teacher_id: string | null

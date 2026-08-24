@@ -18,8 +18,8 @@ export async function POST(req: Request) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '인증 필요' }, { status: 401 })
 
-    const { data: me } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-    if (me?.role !== 'admin') return NextResponse.json({ error: '관리자만 등록할 수 있습니다' }, { status: 403 })
+    const { data: me } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+    if (!me?.is_admin) return NextResponse.json({ error: '관리자만 등록할 수 있습니다' }, { status: 403 })
 
     const { name, email, password, role, classId, studentNumber } = await req.json()
 
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: true, userId: existing.id, repaired: true })
       }
       if (prof.role !== role) {
-        const label = { admin: '관리자', teacher: '교사', student: '학생' }[prof.role as 'admin' | 'teacher' | 'student']
+        const label = { teacher: '교사', student: '학생' }[prof.role as 'teacher' | 'student']
         return NextResponse.json({ error: `이미 ${label} 계정입니다` }, { status: 409 })
       }
       return NextResponse.json({ success: true, userId: existing.id, updated: true })

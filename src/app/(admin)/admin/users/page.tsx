@@ -34,7 +34,7 @@ interface Result {
   message?: string
 }
 
-const ROLE_LABEL: Record<string, string> = { admin: '관리자', teacher: '교사', student: '학생' }
+const ROLE_LABEL: Record<string, string> = { teacher: '교사', student: '학생' }
 
 export default function AdminUsersPage() {
   const supabase = createClient()
@@ -42,7 +42,7 @@ export default function AdminUsersPage() {
   const [classes, setClasses] = useState<Class[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterRole, setFilterRole] = useState<'all' | Role>('all')
+  const [filterRole, setFilterRole] = useState<'all' | 'admin' | Role>('all')
   const [uploading, setUploading] = useState(false)
   const [results, setResults] = useState<Result[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
@@ -57,6 +57,9 @@ export default function AdminUsersPage() {
   const [oneNumber, setOneNumber] = useState('')
   const [savingOne, setSavingOne] = useState(false)
 
+  const [togglingId, setTogglingId] = useState('')
+  const [meId, setMeId] = useState('')
+
   // 교사 초대코드 (10분만 유효 — DB 트리거가 강제한다)
   const [teacherCodes, setTeacherCodes] = useState<InviteCode[]>([])
   const [issuing, setIssuing] = useState(false)
@@ -69,6 +72,8 @@ export default function AdminUsersPage() {
       supabase.from('invite_codes').select('*').eq('role', 'teacher').eq('is_active', true)
         .order('created_at', { ascending: false }),
     ])
+    const { data: { user } } = await supabase.auth.getUser()
+    setMeId(user?.id ?? '')
     setUsers(profs ?? [])
     setClasses(cls ?? [])
     setTeacherCodes(codes ?? [])
@@ -83,6 +88,38 @@ export default function AdminUsersPage() {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [teacherCodes.length])
+
+  /**
+   * 관리 권한을 켜고 끈다.
+   *
+   * 자기 것은 끄지 못하게 막는다. 관리자가 한 명일 때 스스로 해제하면
+   * 이 화면에 들어올 수 있는 사람이 아무도 없게 되고, 되살리려면 SQL 을
+   * 직접 실행해야 한다.
+   */
+  async function toggleAdmin(u: Profile) {
+    if (u.id === meId && u.is_admin) {
+      toast.error('내 관리 권한은 스스로 해제할 수 없습니다', {
+        description: '다른 관리자에게 요청하세요',
+      })
+      return
+    }
+    const next = !u.is_admin
+    if (!confirm(next
+      ? `${u.name} 선생님에게 계정·반 관리 권한을 주시겠습니까?`
+      : `${u.name} 선생님의 관리 권한을 해제하시겠습니까?`)) return
+
+    setTogglingId(u.id)
+    try {
+      const { error } = await supabase.from('profiles').update({ is_admin: next }).eq('id', u.id)
+      if (error) throw error
+      toast.success(next ? '관리자로 지정했습니다.' : '관리 권한을 해제했습니다.')
+      fetchAll()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '변경 실패')
+    } finally {
+      setTogglingId('')
+    }
+  }
 
   async function issueTeacherCode() {
     setIssuing(true)
@@ -145,13 +182,14 @@ export default function AdminUsersPage() {
       이름: u.name,
       이메일: u.email ?? '',
       역할: ROLE_LABEL[u.role] ?? u.role,
+      관리자: u.is_admin ? 'Y' : '',
       반: className(u.class_id),
       학번: u.student_number ?? '',
       등록일: u.created_at ? formatDate(u.created_at) : '',
       비밀번호: '',   // 다시 등록할 때 채워 넣도록 빈 칸으로 둔다
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
-    ws['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 8 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 14 }]
+    ws['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 8 }, { wch: 6 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 14 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '사용자명단')
     const stamp = new Date().toISOString().slice(0, 10)
@@ -245,11 +283,13 @@ export default function AdminUsersPage() {
 
   const filtered = users.filter(u => {
     const matchSearch = u.name.includes(search) || (u.email ?? '').includes(search)
-    const matchRole = filterRole === 'all' || u.role === filterRole
+    const matchRole = filterRole === 'all'
+      ? true
+      : filterRole === 'admin' ? u.is_admin : u.role === filterRole
     return matchSearch && matchRole
   })
   const counts = {
-    admin: users.filter(u => u.role === 'admin').length,
+    admin: users.filter(u => u.is_admin).length,
     teacher: users.filter(u => u.role === 'teacher').length,
     student: users.filter(u => u.role === 'student').length,
   }
@@ -259,7 +299,8 @@ export default function AdminUsersPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">사용자 관리</h1>
         <p className="text-gray-500 text-sm mt-1">
-          관리자 {counts.admin}명 · 교사 {counts.teacher}명 · 학생 {counts.student}명
+          교사 {counts.teacher}명 · 학생 {counts.student}명
+          <span className="text-gray-400"> — 그중 관리자 겸임 {counts.admin}명</span>
         </p>
       </div>
 
@@ -459,7 +500,7 @@ export default function AdminUsersPage() {
                       filterRole === r ? 'bg-slate-800 text-white border-slate-800'
                                        : 'bg-white text-gray-600 border-gray-300 hover:border-slate-400'
                     }`}>
-                    {r === 'all' ? '전체' : ROLE_LABEL[r]}
+                    {r === 'all' ? '전체' : r === 'admin' ? '관리자' : ROLE_LABEL[r]}
                   </button>
                 ))}
               </div>
@@ -486,6 +527,7 @@ export default function AdminUsersPage() {
                   <TableHead>반</TableHead>
                   <TableHead>학번</TableHead>
                   <TableHead>등록일</TableHead>
+                  <TableHead className="text-right">관리 권한</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -495,16 +537,28 @@ export default function AdminUsersPage() {
                     <TableCell className="text-gray-600">{u.email}</TableCell>
                     <TableCell>
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                        u.role === 'admin' ? 'bg-slate-800 text-white'
-                        : u.role === 'teacher' ? 'bg-blue-100 text-blue-700'
-                        : 'bg-gray-100 text-gray-700'
+                        u.role === 'teacher' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
                       }`}>
                         {ROLE_LABEL[u.role]}
                       </span>
+                      {u.is_admin && (
+                        <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-white">
+                          관리자
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="text-gray-600">{className(u.class_id)}</TableCell>
                     <TableCell className="text-gray-600">{u.student_number}</TableCell>
                     <TableCell className="text-gray-400 text-sm">{u.created_at ? formatDate(u.created_at) : ''}</TableCell>
+                    <TableCell className="text-right">
+                      {u.role === 'teacher' && (
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          disabled={togglingId === u.id}
+                          onClick={() => toggleAdmin(u)}>
+                          {u.is_admin ? '관리자 해제' : '관리자 지정'}
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
