@@ -4,9 +4,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  * «이 사람이 저 학생에게 무엇을 할 수 있는가» 를 한 곳에서 판단한다.
  *
  * 정해진 권한
- *   교과 담당 교사 : 조회 · 비밀번호 초기화
- *   담임 교사      : 조회 · 비밀번호 초기화 · 반배정 수정 · 삭제
- *   관리자         : 모든 학생에 대해 위 전부
+ *   교과 담당 교사 : 담당반 학생 조회 · 비밀번호 초기화
+ *   담임 교사      : 담임반 학생 조회 · 비밀번호 초기화 · 반배정 수정 · 삭제
+ *   관리자         : 모든 학생에 위 전부 + «다른 교사» 비밀번호 초기화
+ *
+ * 관리자가 교사도 다룰 수 있어야 하는 이유 : 교내망에는 메일 서버가 없어
+ * «비밀번호 찾기» 메일을 보낼 수 없다. 선생님이 비밀번호를 잊으면 관리자가
+ * 새로 정해 주는 것이 유일한 길이다.
  *
  * ⚠ 왜 서버에서 다시 판단하는가
  *   DB 정책(RLS)이 이미 막고 있지만, 비밀번호 초기화와 계정 삭제는
@@ -49,10 +53,22 @@ export async function checkStudentAccess(
     .from('profiles').select('*').eq('id', studentId).maybeSingle()
 
   // RLS 가 걸러 냈다면 여기서 null 이다 = 볼 권한이 없다
-  if (!stu) return DENY('그 학생에 대한 권한이 없습니다')
-  if (stu.role !== 'student') return DENY('학생 계정만 처리할 수 있습니다')
+  if (!stu) return DENY('그 계정에 대한 권한이 없습니다')
 
-  if (isAdmin) return { allowed: true, canManage: true, isAdmin: true }
+  // 자기 계정은 여기서 다루지 않는다. «내 계정» 화면에서 현재 비밀번호를
+  // 확인한 뒤 바꾼다 — 로그인된 브라우저를 남의 손에 두고 자리를 비웠을 때
+  // 그 사람이 비밀번호를 갈아버리는 것을 막는다.
+  if (studentId === callerId) return DENY('내 비밀번호는 «내 계정» 화면에서 바꿉니다')
+
+  // 관리자는 교사도 다룰 수 있다 (비밀번호 초기화). 학생은 관리까지.
+  if (isAdmin) {
+    if (stu.role !== 'student' && stu.role !== 'teacher') {
+      return DENY('처리할 수 없는 계정입니다')
+    }
+    return { allowed: true, canManage: stu.role === 'student', isAdmin: true }
+  }
+
+  if (stu.role !== 'student') return DENY('학생 계정만 처리할 수 있습니다')
 
   // 담임인가 — class_teachers 의 role 로 판단한다
   let isHomeroom = false

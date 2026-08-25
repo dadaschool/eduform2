@@ -180,7 +180,8 @@ export default function AdminUsersPage() {
   }
 
   async function resetStudentPassword(u: Profile) {
-    const pw = prompt(`${u.name} 학생의 새 비밀번호 (6자 이상)`, 'edu1234')
+    const label = u.role === 'teacher' ? '선생님' : '학생'
+    const pw = prompt(`${u.name} ${label}의 새 비밀번호 (6자 이상)`, 'edu1234')
     if (!pw) return
     if (pw.length < 6) { toast.error('비밀번호는 6자 이상이어야 합니다'); return }
     setBusyId(u.id)
@@ -513,7 +514,8 @@ export default function AdminUsersPage() {
         <CardContent className="space-y-4">
           <div className="text-sm text-gray-600">
             <span className="block text-gray-500 mb-1">
-              본인 계정은 건너뜁니다. 없는 반은 만들지 물어봅니다. 교사 행에 반이 있으면 그 반 담임이 됩니다.
+              본인 계정은 건너뜁니다 (내 비밀번호는 <b>교사 화면 → 내 계정</b>에서 바꿉니다).
+              없는 반은 만들지 물어봅니다. 교사 행에 반이 있으면 그 반 담임이 됩니다.
             </span>
             엑셀 컬럼: <code className="px-1 bg-gray-100 rounded">이름</code>{' '}
             <code className="px-1 bg-gray-100 rounded">이메일</code>{' '}
@@ -752,11 +754,19 @@ export default function AdminUsersPage() {
                     <TableCell className="text-gray-400 text-sm">{u.created_at ? formatDate(u.created_at) : ''}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       {u.role === 'teacher' ? (
-                        <Button variant="outline" size="sm" className="h-7 text-xs"
-                          disabled={togglingId === u.id}
-                          onClick={() => toggleAdmin(u)}>
-                          {u.is_admin ? '관리자 해제' : '관리자 지정'}
-                        </Button>
+                        <div className="flex gap-1 justify-end">
+                          {/* 메일 서버가 없으니 관리자가 새로 정해 주는 것이 유일한 길이다 */}
+                          {u.id !== meId && (
+                            <Button variant="outline" size="sm" className="h-7 text-xs"
+                              disabled={busyId === u.id}
+                              onClick={() => resetStudentPassword(u)}>비밀번호</Button>
+                          )}
+                          <Button variant="outline" size="sm" className="h-7 text-xs"
+                            disabled={togglingId === u.id}
+                            onClick={() => toggleAdmin(u)}>
+                            {u.is_admin ? '관리자 해제' : '관리자 지정'}
+                          </Button>
+                        </div>
                       ) : (
                         <div className="flex gap-1 justify-end">
                           <Button variant="outline" size="sm" className="h-7 text-xs"

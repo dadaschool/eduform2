@@ -14,6 +14,7 @@ import {
   Eye,
   Award,
   LogOut,
+  UserCog,
   ShieldCheck,
   GraduationCap,
   School,
@@ -30,6 +31,7 @@ const navItems = [
   { href: '/teacher/records', label: '학생부 초안', icon: FileText },
   { href: '/teacher/badges', label: '디지털 배지', icon: Award },
   { href: '/teacher/messages', label: '쪽지함', icon: MessageCircle },
+  { href: '/teacher/account', label: '내 계정', icon: UserCog },
 ]
 
 interface SidebarProps {
