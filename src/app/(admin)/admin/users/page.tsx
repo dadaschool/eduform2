@@ -70,6 +70,7 @@ export default function AdminUsersPage() {
   const [togglingId, setTogglingId] = useState('')
   const [meId, setMeId] = useState('')
   const [filterClass, setFilterClass] = useState('all')
+  const [myEmail, setMyEmail] = useState('')
 
   // 학생 수정 (반 배정 · 이름 · 학번)
   const [editUser, setEditUser] = useState<Profile | null>(null)
@@ -93,6 +94,7 @@ export default function AdminUsersPage() {
     ])
     const { data: { user } } = await supabase.auth.getUser()
     setMeId(user?.id ?? '')
+    setMyEmail(user?.email ?? '')
     setUsers(profs ?? [])
     setClasses(cls ?? [])
     setTeacherCodes(codes ?? [])
@@ -333,6 +335,16 @@ export default function AdminUsersPage() {
           out.push({ email, name, status: 'failed', message: '학생은 반이 필요합니다' })
           continue
         }
+        // 🔴 본인 계정은 건드리지 않는다.
+        //
+        // 같은 이메일이면 «비밀번호를 갱신» 하는 것이 이 화면의 규칙인데,
+        // 명단에 관리자 본인이 들어 있으면 자기 비밀번호가 조용히 파일 값으로
+        // 바뀐다. 파일 값을 모르면 그대로 로그인이 막힌다. 실제로 겪었다.
+        if (myEmail && email.toLowerCase() === myEmail.toLowerCase()) {
+          out.push({ email, name, status: 'failed',
+            message: '본인 계정은 건너뜁니다 — 비밀번호가 바뀌면 로그인할 수 없습니다' })
+          continue
+        }
         valid.push({ name, email, password, role, classText, studentNumber })
       }
 
@@ -500,6 +512,9 @@ export default function AdminUsersPage() {
         <CardHeader className="pb-3"><CardTitle className="text-base">등록 · 백업</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="text-sm text-gray-600">
+            <span className="block text-gray-500 mb-1">
+              본인 계정은 건너뜁니다. 없는 반은 만들지 물어봅니다. 교사 행에 반이 있으면 그 반 담임이 됩니다.
+            </span>
             엑셀 컬럼: <code className="px-1 bg-gray-100 rounded">이름</code>{' '}
             <code className="px-1 bg-gray-100 rounded">이메일</code>{' '}
             <code className="px-1 bg-gray-100 rounded">비밀번호</code>{' '}
