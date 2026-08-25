@@ -422,6 +422,26 @@ as $$
   )
 $$;
 
+/**
+ * 내가 «담임» 인 반의 학생인가.
+ *
+ * is_my_student() 는 교과 담당까지 참이다. 그런데 반배정 변경과 계정 삭제는
+ * 담임만 할 수 있어야 한다 — 교과 교사가 남의 반 학생을 다른 반으로 옮기거나
+ * 계정을 지우면 되돌릴 수 없다.
+ */
+create or replace function is_my_homeroom_student(p_student_id uuid)
+returns boolean
+language sql security definer stable set search_path = public
+as $$
+  select exists (
+    select 1 from profiles p
+    join class_teachers ct on ct.class_id = p.class_id
+    where p.id = p_student_id
+      and ct.teacher_id = auth.uid()
+      and ct.role = 'homeroom'
+  )
+$$;
+
 -- 이 교사가 내(학생) 반을 담당하는가.
 -- 학생 화면에서 담당 교사 이름을 표시하고 쪽지 상대를 고를 때 쓴다.
 -- 예전에는 담임(profiles.teacher_id) 한 명만 볼 수 있어서, 교과 교사가
@@ -601,15 +621,24 @@ create policy "profiles_select" on profiles for select using (
 -- auth.uid() = id 만 검사하면 역할을 호출자가 정할 수 있어,
 -- 누구나 스스로 교사나 관리자가 될 수 있었다.
 
+-- 수정은 본인 · 담임 · 관리자만.
+-- 교과 담당 교사는 학생을 «볼» 수 있지만 고치지는 못한다. 여러 교사가 같은
+-- 반을 담당하는데 아무나 이름과 반을 바꿀 수 있으면 서로 덮어쓴다.
 create policy "profiles_update" on profiles for update using (
   auth.uid() = id
-  or (is_my_student(id) and is_teacher())
-  or (teacher_id = auth.uid() and is_teacher())
+  or is_my_homeroom_student(id)
+  or (teacher_id = auth.uid() and is_teacher())   -- 반 배정 전 학생
   or is_admin()
+) with check (
+  -- 여기까지 왔으면 그 학생을 다룰 권한은 이미 확인됐다. 바뀐 행에는
+  -- 느슨하게 둔다. 그러지 않으면 «다른 반으로 옮기기» 가 스스로 막힌다
+  -- (옮긴 뒤에는 내 담임 학생이 아니게 되므로).
+  auth.uid() = id or is_teacher() or is_admin()
 );
+-- 삭제는 담임과 관리자만. 교과 담당은 못 지운다.
 create policy "profiles_delete" on profiles for delete using (
-  (teacher_id = auth.uid() and is_teacher())
-  or (is_my_student(id) and is_teacher())
+  is_my_homeroom_student(id)
+  or (teacher_id = auth.uid() and is_teacher())   -- 반 배정 전 학생
   or is_admin()
 );
 

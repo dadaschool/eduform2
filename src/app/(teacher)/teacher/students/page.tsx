@@ -28,6 +28,14 @@ export default function StudentsPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterClass, setFilterClass] = useState('all')
+  /**
+   * 반별 내 역할. 담임이면 'homeroom', 교과 담당이면 'subject'.
+   *
+   * 교과 담당은 학생을 «보기만» 한다. 여러 교사가 같은 반을 담당하는데
+   * 아무나 이름과 반을 고치고 계정을 지울 수 있으면 서로 덮어쓴다.
+   * 비밀번호 초기화는 교과 담당도 할 수 있다 — 수업 중에 자주 필요하다.
+   */
+  const [myRole, setMyRole] = useState<Record<string, string>>({})
 
   // 인라인 편집 상태
   const [editingCell, setEditingCell] = useState<{ studentId: string; field: string } | null>(null)
@@ -56,8 +64,9 @@ export default function StudentsPage() {
     // 내가 담당하는 반을 먼저 찾는다. 예전에는 profiles.teacher_id 로 학생을
     // 찾아서, 같은 반을 담당해도 다른 교사의 학생은 보이지 않았다.
     const { data: mine } = await supabase
-      .from('class_teachers').select('class_id').eq('teacher_id', user.id)
+      .from('class_teachers').select('class_id, role').eq('teacher_id', user.id)
     const myClassIds = (mine ?? []).map(r => r.class_id)
+    setMyRole(Object.fromEntries((mine ?? []).map(r => [r.class_id, r.role])))
 
     const [{ data: cls }, { data: studs }, { data: bdgs }, { data: allSb }] = await Promise.all([
       myClassIds.length
@@ -119,8 +128,27 @@ export default function StudentsPage() {
   }
 
   // 인라인 편집 저장
+  /** 고치고 지울 수 있는가 — 담임만. */
+  function canManage(student: StudentRow) {
+    return myRole[student.class_id ?? ''] === 'homeroom'
+  }
+
+  function startEdit(student: StudentRow, field: string) {
+    if (!canManage(student)) {
+      toast.error('교과 담당은 학생 정보를 고칠 수 없습니다', {
+        description: '담임 교사나 관리자에게 요청하세요',
+      })
+      return
+    }
+    setEditingCell({ studentId: student.id, field })
+    if (field === 'class_id') {
+      setEditValues(prev => ({ ...prev, [`${student.id}_class_id`]: student.class_id ?? '' }))
+    }
+  }
+
   async function saveInlineEdit(student: StudentRow, field: string, value: string) {
     setEditingCell(null)
+    if (!canManage(student)) return
     if (field === 'email') {
       if (!value.trim() || value === student.email) return
       const res = await fetch('/api/teacher/reset-password', {
@@ -146,11 +174,26 @@ export default function StudentsPage() {
     else fetchData()
   }
 
-  async function deleteStudent(id: string, name: string) {
-    if (!confirm(`"${name}" 학생을 삭제하면 과제·평가·관찰기록이 모두 삭제됩니다.\n정말 삭제하시겠습니까?`)) return
-    const { error } = await supabase.from('profiles').delete().eq('id', id)
-    if (error) { toast.error('삭제 실패: ' + error.message); return }
-    toast.success(`${name} 학생이 삭제되었습니다.`)
+  /**
+   * 학생 계정을 지운다. 담임만.
+   *
+   * profiles 만 지우면 로그인 계정이 남아, 그 학생은 계속 로그인되면서
+   * «계정 등록이 완료되지 않았습니다» 만 보게 된다. 라우트로 auth 쪽까지 지운다.
+   */
+  async function deleteStudent(student: StudentRow) {
+    if (!canManage(student)) {
+      toast.error('삭제는 담임 교사만 할 수 있습니다')
+      return
+    }
+    if (!confirm(`"${student.name}" 학생을 삭제하면 과제·평가·관찰기록이 모두 삭제됩니다.
+정말 삭제하시겠습니까?`)) return
+    const res = await fetch('/api/teacher/delete-student', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: student.id }),
+    })
+    const result = await res.json().catch(() => ({}))
+    if (!res.ok) { toast.error('삭제 실패: ' + (result.error ?? '')); return }
+    toast.success(`${student.name} 학생이 삭제되었습니다.`)
     fetchData()
   }
 
@@ -387,7 +430,7 @@ export default function StudentsPage() {
                       </Select>
                     ) : (
                       <button
-                        onClick={() => { setEditingCell({ studentId: s.id, field: 'class_id' }); setEditValues(prev => ({ ...prev, [`${s.id}_class_id`]: s.class_id ?? '' })) }}
+                        onClick={() => startEdit(s, 'class_id')}
                         className="text-xs text-gray-600 hover:bg-blue-50 hover:text-blue-700 px-1.5 py-0.5 rounded w-full text-left"
                       >
                         {s.class?.name ?? <span className="text-gray-300">미배정</span>}
@@ -408,7 +451,7 @@ export default function StudentsPage() {
                     ) : (
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => setEditingCell({ studentId: s.id, field: 'name' })}
+                          onClick={() => startEdit(s, 'name')}
                           className="text-sm font-medium text-gray-900 hover:bg-blue-50 hover:text-blue-700 px-1.5 py-0.5 rounded text-left"
                         >
                           {s.name}
@@ -432,7 +475,7 @@ export default function StudentsPage() {
                       />
                     ) : (
                       <button
-                        onClick={() => setEditingCell({ studentId: s.id, field: 'student_number' })}
+                        onClick={() => startEdit(s, 'student_number')}
                         className="text-xs text-gray-500 hover:bg-blue-50 hover:text-blue-700 px-1.5 py-0.5 rounded w-full text-left"
                       >
                         {s.student_number ?? <span className="text-gray-300">-</span>}
@@ -453,7 +496,7 @@ export default function StudentsPage() {
                       />
                     ) : (
                       <button
-                        onClick={() => setEditingCell({ studentId: s.id, field: 'email' })}
+                        onClick={() => startEdit(s, 'email')}
                         className="text-xs text-gray-400 hover:bg-blue-50 hover:text-blue-700 px-1.5 py-0.5 rounded w-full text-left truncate max-w-[160px]"
                       >
                         {s.email ?? <span className="text-gray-300">-</span>}
@@ -508,9 +551,10 @@ export default function StudentsPage() {
                         <Key className="w-3.5 h-3.5" />
                       </button>
                       <button
-                        onClick={() => deleteStudent(s.id, s.name)}
-                        title="학생 삭제"
-                        className="p-1 rounded text-red-300 hover:text-red-600 hover:bg-red-50"
+                        disabled={!canManage(s)}
+                        title={canManage(s) ? '학생 삭제' : '담임 교사만 삭제할 수 있습니다'}
+                        onClick={() => deleteStudent(s)}
+                        className="p-1 rounded text-red-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:text-red-300"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>

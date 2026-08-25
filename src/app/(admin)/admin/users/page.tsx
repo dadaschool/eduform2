@@ -34,6 +34,16 @@ interface Result {
   message?: string
 }
 
+/** 엑셀 한 행을 정리한 것. 반을 만들지 묻기 전에 전부 읽어 둬야 한다. */
+interface Parsed {
+  name: string
+  email: string
+  password: string
+  role: 'teacher' | 'student'
+  classText: string
+  studentNumber: string
+}
+
 const ROLE_LABEL: Record<string, string> = { teacher: '교사', student: '학생' }
 
 export default function AdminUsersPage() {
@@ -59,6 +69,15 @@ export default function AdminUsersPage() {
 
   const [togglingId, setTogglingId] = useState('')
   const [meId, setMeId] = useState('')
+  const [filterClass, setFilterClass] = useState('all')
+
+  // 학생 수정 (반 배정 · 이름 · 학번)
+  const [editUser, setEditUser] = useState<Profile | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editNumber, setEditNumber] = useState('')
+  const [editClass, setEditClass] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [busyId, setBusyId] = useState('')
 
   // 교사 초대코드 (10분만 유효 — DB 트리거가 강제한다)
   const [teacherCodes, setTeacherCodes] = useState<InviteCode[]>([])
@@ -118,6 +137,87 @@ export default function AdminUsersPage() {
       toast.error(err instanceof Error ? err.message : '변경 실패')
     } finally {
       setTogglingId('')
+    }
+  }
+
+  function openEdit(u: Profile) {
+    setEditUser(u)
+    setEditName(u.name)
+    setEditNumber(u.student_number ?? '')
+    setEditClass(u.class_id ?? '')
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editUser) return
+    setSavingEdit(true)
+    try {
+      const { error } = await supabase.from('profiles').update({
+        name: editName.trim(),
+        student_number: editNumber.trim() || null,
+        class_id: editClass || null,
+      }).eq('id', editUser.id)
+      if (error) throw error
+
+      // 반이 바뀌면 담당 교사도 그 반의 담임으로 바꿔 준다. 그러지 않으면
+      // 옛 반 교사 화면에 남고 새 반 교사에게는 안 보인다.
+      if (editClass && editClass !== editUser.class_id) {
+        const { data: hr } = await supabase.from('class_teachers')
+          .select('teacher_id').eq('class_id', editClass).eq('role', 'homeroom').maybeSingle()
+        await supabase.from('profiles')
+          .update({ teacher_id: hr?.teacher_id ?? null }).eq('id', editUser.id)
+      }
+      toast.success('수정했습니다.')
+      setEditUser(null)
+      fetchAll()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '수정 실패')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  async function resetStudentPassword(u: Profile) {
+    const pw = prompt(`${u.name} 학생의 새 비밀번호 (6자 이상)`, 'edu1234')
+    if (!pw) return
+    if (pw.length < 6) { toast.error('비밀번호는 6자 이상이어야 합니다'); return }
+    setBusyId(u.id)
+    try {
+      const res = await fetch('/api/teacher/reset-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: u.id, password: pw }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? '초기화 실패')
+      toast.success(`${u.name} 비밀번호를 바꿨습니다.`, { description: '학생에게 알려주세요' })
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '초기화 실패')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  async function removeStudent(u: Profile) {
+    if (!confirm(
+      `${u.name} 학생의 계정을 지우시겠습니까?
+
+` +
+      `평가 · 과제 · 관찰기록 · 배지가 «모두» 함께 지워지고 되돌릴 수 없습니다.`
+    )) return
+    setBusyId(u.id)
+    try {
+      const res = await fetch('/api/teacher/delete-student', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: u.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? '삭제 실패')
+      toast.success(`${u.name} 계정을 지웠습니다.`)
+      fetchAll()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '삭제 실패')
+    } finally {
+      setBusyId('')
     }
   }
 
@@ -208,6 +308,10 @@ export default function AdminUsersPage() {
       if (rows.length === 0) { toast.error('데이터가 없습니다'); return }
 
       const out: Result[] = []
+      const valid: Parsed[] = []
+
+      // ① 먼저 전부 읽고 기본 검사만 한다.
+      //    «없는 반을 만들까요» 를 물으려면 어떤 반이 필요한지 미리 알아야 한다.
       for (const row of rows) {
         const name = (row['이름'] ?? '').toString().trim()
         const email = (row['이메일'] ?? row['아이디'] ?? '').toString().trim()
@@ -225,25 +329,94 @@ export default function AdminUsersPage() {
           out.push({ email, name, status: 'failed', message: '비밀번호가 6자 미만입니다' })
           continue
         }
-        let classId: string | null = null
-        if (role === 'student') {
-          const found = classes.find(c => c.name === classText)
-          if (!found) {
-            out.push({ email, name, status: 'failed', message: classText ? `'${classText}' 반을 찾을 수 없습니다` : '학생은 반이 필요합니다' })
-            continue
-          }
-          classId = found.id
+        if (role === 'student' && !classText) {
+          out.push({ email, name, status: 'failed', message: '학생은 반이 필요합니다' })
+          continue
         }
-        try {
-          const { ok, data } = await createUser({ name, email, password, role, classId, studentNumber })
-          if (!ok) out.push({ email, name, status: 'failed', message: data.error })
-          else if (data.updated) out.push({ email, name, status: 'updated' })
-          else if (data.repaired) out.push({ email, name, status: 'repaired' })
-          else out.push({ email, name, status: 'added' })
-        } catch {
-          out.push({ email, name, status: 'failed', message: '요청 실패' })
+        valid.push({ name, email, password, role, classText, studentNumber })
+      }
+
+      // ② 목록에 없는 반을 모아 한 번에 묻는다.
+      //    예전에는 그냥 실패시켰다. 그래서 반을 먼저 만들지 않으면 명단을
+      //    통째로 다시 올려야 했다.
+      const byName = new Map(classes.map(c => [c.name, c.id]))
+      const missing = [...new Set(valid.map(v => v.classText).filter(n => n && !byName.has(n)))]
+
+      if (missing.length > 0) {
+        const list = missing.map(n => `  · ${n}`).join('\n')
+        const make = confirm(
+          `명단에 있는데 아직 없는 반이 ${missing.length}개 있습니다.\n\n${list}\n\n` +
+          `지금 만들까요?\n\n` +
+          `아니오를 누르면 이 반에 해당하는 사람은 등록되지 않습니다.`
+        )
+        if (make) {
+          const year = new Date().getFullYear()
+          const { data: made, error } = await supabase
+            .from('classes')
+            .insert(missing.map(name => ({ name, year, teacher_id: meId })))
+            .select('id, name')
+          if (error) {
+            toast.error('반을 만들지 못했습니다', { description: error.message })
+          } else {
+            ;(made ?? []).forEach(c => byName.set(c.name, c.id))
+            toast.success(`반 ${made?.length ?? 0}개를 만들었습니다.`)
+          }
         }
       }
+
+      async function register(v: Parsed, classId: string | null) {
+        try {
+          const { ok, data } = await createUser({
+            name: v.name, email: v.email, password: v.password,
+            role: v.role, classId, studentNumber: v.studentNumber,
+          })
+          if (!ok) return { status: 'failed' as const, message: data.error as string, userId: null }
+          const status = data.updated ? ('updated' as const)
+            : data.repaired ? ('repaired' as const)
+            : ('added' as const)
+          return { status, message: undefined, userId: data.userId as string }
+        } catch {
+          return { status: 'failed' as const, message: '요청 실패', userId: null }
+        }
+      }
+
+      // ③ 교사를 «먼저» 처리한다.
+      //    학생의 담당 교사는 서버가 그 반의 담임을 찾아 채운다. 학생을 먼저
+      //    넣으면 담임이 아직 없어서 빈 채로 들어가고, 교사 화면에 안 보인다.
+      for (const v of valid.filter(v => v.role === 'teacher')) {
+        const r = await register(v, null)
+        if (r.status === 'failed' || !r.userId) {
+          out.push({ email: v.email, name: v.name, status: 'failed', message: r.message })
+          continue
+        }
+
+        // 교사 행에 반이 적혀 있으면 그 반의 담임으로 배정한다
+        let note: string | undefined
+        if (v.classText) {
+          const classId = byName.get(v.classText)
+          if (!classId) {
+            note = `'${v.classText}' 반이 없어 담임 배정은 못 했습니다`
+          } else {
+            const { error } = await supabase
+              .from('class_teachers')
+              .upsert({ class_id: classId, teacher_id: r.userId, role: 'homeroom' },
+                      { onConflict: 'class_id,teacher_id' })
+            note = error ? `담임 배정 실패: ${error.message}` : `${v.classText} 담임`
+          }
+        }
+        out.push({ email: v.email, name: v.name, status: r.status, message: note })
+      }
+
+      for (const v of valid.filter(v => v.role === 'student')) {
+        const classId = byName.get(v.classText)
+        if (!classId) {
+          out.push({ email: v.email, name: v.name, status: 'failed', message: `'${v.classText}' 반이 없습니다` })
+          continue
+        }
+        const r = await register(v, classId)
+        out.push({ email: v.email, name: v.name, status: r.status, message: r.message })
+      }
+
       setResults(out)
       const added = out.filter(r => r.status === 'added').length
       const changed = out.filter(r => r.status === 'updated' || r.status === 'repaired').length
@@ -282,11 +455,15 @@ export default function AdminUsersPage() {
   }
 
   const filtered = users.filter(u => {
-    const matchSearch = u.name.includes(search) || (u.email ?? '').includes(search)
+    // 반 이름으로도 찾을 수 있게 한다. 학생 명단에서 «1-3» 을 치면 그 반만 나온다.
+    const matchSearch = u.name.includes(search)
+      || (u.email ?? '').includes(search)
+      || className(u.class_id).includes(search)
+    const matchClass = filterClass === 'all' || u.class_id === filterClass
     const matchRole = filterRole === 'all'
       ? true
       : filterRole === 'admin' ? u.is_admin : u.role === filterRole
-    return matchSearch && matchRole
+    return matchSearch && matchRole && matchClass
   })
   const counts = {
     admin: users.filter(u => u.is_admin).length,
@@ -504,9 +681,17 @@ export default function AdminUsersPage() {
                   </button>
                 ))}
               </div>
+              <select
+                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-700"
+                value={filterClass} onChange={e => setFilterClass(e.target.value)}>
+                <option value="all">반 전체</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.year})</option>
+                ))}
+              </select>
               <div className="relative w-48">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                <Input placeholder="이름·이메일" className="pl-7 h-8 text-sm"
+                <Input placeholder="이름·이메일·반" className="pl-7 h-8 text-sm"
                   value={search} onChange={e => setSearch(e.target.value)} />
               </div>
             </div>
@@ -527,7 +712,7 @@ export default function AdminUsersPage() {
                   <TableHead>반</TableHead>
                   <TableHead>학번</TableHead>
                   <TableHead>등록일</TableHead>
-                  <TableHead className="text-right">관리 권한</TableHead>
+                  <TableHead className="text-right">작업</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -550,13 +735,25 @@ export default function AdminUsersPage() {
                     <TableCell className="text-gray-600">{className(u.class_id)}</TableCell>
                     <TableCell className="text-gray-600">{u.student_number}</TableCell>
                     <TableCell className="text-gray-400 text-sm">{u.created_at ? formatDate(u.created_at) : ''}</TableCell>
-                    <TableCell className="text-right">
-                      {u.role === 'teacher' && (
+                    <TableCell className="text-right whitespace-nowrap">
+                      {u.role === 'teacher' ? (
                         <Button variant="outline" size="sm" className="h-7 text-xs"
                           disabled={togglingId === u.id}
                           onClick={() => toggleAdmin(u)}>
                           {u.is_admin ? '관리자 해제' : '관리자 지정'}
                         </Button>
+                      ) : (
+                        <div className="flex gap-1 justify-end">
+                          <Button variant="outline" size="sm" className="h-7 text-xs"
+                            onClick={() => openEdit(u)}>수정</Button>
+                          <Button variant="outline" size="sm" className="h-7 text-xs"
+                            disabled={busyId === u.id}
+                            onClick={() => resetStudentPassword(u)}>비밀번호</Button>
+                          <Button variant="outline" size="sm"
+                            className="h-7 text-xs text-red-500 hover:text-red-700"
+                            disabled={busyId === u.id}
+                            onClick={() => removeStudent(u)}>삭제</Button>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
@@ -566,6 +763,40 @@ export default function AdminUsersPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* 학생 수정 — 반 배정을 바꾸면 담당 교사도 새 반의 담임으로 바뀐다 */}
+      <Dialog open={editUser !== null} onOpenChange={o => { if (!o) setEditUser(null) }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{editUser?.name} 학생 수정</DialogTitle></DialogHeader>
+          <form onSubmit={saveEdit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>이름 *</Label>
+              <Input value={editName} onChange={e => setEditName(e.target.value)} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label>반</Label>
+              <select
+                className="w-full h-9 rounded-md border border-gray-300 bg-white px-2 text-sm"
+                value={editClass} onChange={e => setEditClass(e.target.value)}>
+                <option value="">(배정 없음)</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.year})</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>학번</Label>
+              <Input value={editNumber} onChange={e => setEditNumber(e.target.value)} />
+            </div>
+            <p className="text-xs text-gray-500">
+              이메일과 비밀번호는 표의 <b>비밀번호</b> 단추로 바꿉니다.
+            </p>
+            <Button type="submit" className="w-full" disabled={savingEdit}>
+              {savingEdit ? '저장 중...' : '저장'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
