@@ -120,14 +120,54 @@ ok('관리자는 뗄 수 있다', !blocked(await attempt(ADMIN,
 
 console.log('\n[6] 반 주인은 그 반 학생을 다룬다')
 await clearAssigns()
-ok('반 주인은 학생 이름을 고친다', !blocked(await attempt(OWNER,
-  `update profiles set name='고침' where id=$1`, [STU])))
-ok('반 주인은 학생을 지운다', !blocked(await attempt(OWNER,
-  `delete from profiles where id=$1`, [STU])))
-await client.query(`insert into profiles (id,email,name,role,class_id) values ($1,'st@s.kr','학생','student',$2)`,
-  [STU, CLS])
+
+// 막히면 «왜» 막혔는지 남긴다. 0행(정책이 걸러냄)과 오류(권한·트리거)는
+// 원인이 전혀 다른데, 이유를 안 적어두면 구분할 수 없다.
+async function show(label, uid, sql, params) {
+  const r = await attempt(uid, sql, params)
+  const why = r.error ? `오류: ${r.error}` : `바뀐 행 ${r.rows}`
+  ok(label, !blocked(r), why)
+  return r
+}
+
+// 상태를 먼저 찍어 둔다 — 뭘 잘못 짚고 있는지 바로 보인다
+{
+  const d = (await client.query(
+    `select p.class_id as 학생반, c.teacher_id as 반주인, p.teacher_id as 담당교사
+     from profiles p left join classes c on c.id = p.class_id where p.id = $1`, [STU])).rows[0]
+  console.log(`  · 학생의 반 = ${d?.학생반}`)
+  console.log(`  · 그 반을 만든 사람 = ${d?.반주인}   (OWNER = ${OWNER})`)
+  console.log(`  · 학생의 담당 교사 = ${d?.담당교사}`)
+  const f = await val(OWNER, 'select is_my_owned_student($1) owned, is_class_owner($2) owner, auth.uid() uid',
+                      [STU, CLS])
+  console.log(`  · OWNER 로서 is_my_owned_student = ${f.owned}, is_class_owner = ${f.owner}, auth.uid() = ${f.uid}`)
+  const pol = (await client.query(
+    `select cmd, qual, with_check from pg_policies where tablename='profiles' and policyname in ('profiles_update','profiles_delete') order by cmd`)).rows
+  for (const q of pol) console.log(`  · 정책 ${q.cmd}: ${String(q.qual).replace(/\s+/g,' ').slice(0,150)}`)
+}
+
+// ⚠ 수정·삭제 전에 «조회» 가 되는지 먼저 본다.
+//    PostgreSQL 은 where 절이 있는 update/delete 에 select 정책도 함께 적용한다.
+//    조회에서 걸리면 수정 정책이 통과해도 결과가 «0행» 이 되어, 원인을 엉뚱한
+//    곳에서 찾게 된다. 실제로 이 함정에 빠졌다.
+check('반 주인에게 그 반 학생이 «보인다» (조회 정책)',
+  (await val(OWNER, `select count(*)::int n from profiles where id=$1`, [STU])).n, 1)
+
+await show('반 주인은 학생 이름을 고친다', OWNER, `update profiles set name='고침' where id=$1`, [STU])
+await show('반 주인은 학생을 지운다', OWNER, `delete from profiles where id=$1`, [STU])
+
+// 지워졌는지 확인한 뒤 되살린다. 안 지워졌으면 중복 키로 터진다.
+const left = (await client.query('select count(*)::int n from profiles where id=$1', [STU])).rows[0].n
+if (left === 0) {
+  await client.query(`insert into profiles (id,email,name,role,class_id) values ($1,'st@s.kr','학생','student',$2)`,
+    [STU, CLS])
+} else {
+  await client.query(`update profiles set name='학생' where id=$1`, [STU])
+}
+
 // 교과 담당으로 붙은 다른 교사는 여전히 못 고친다
-await client.query(`insert into class_teachers (class_id,teacher_id,role) values ($1,$2,'subject')`, [CLS, OTHER])
+await client.query(`insert into class_teachers (class_id,teacher_id,role) values ($1,$2,'subject')
+  on conflict (class_id,teacher_id) do update set role='subject'`, [CLS, OTHER])
 ok('🔴 교과 담당은 여전히 못 고친다', blocked(await attempt(OTHER,
   `update profiles set name='교과가고침' where id=$1`, [STU])))
 ok('🔴 교과 담당은 여전히 못 지운다', blocked(await attempt(OTHER,

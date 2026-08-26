@@ -635,9 +635,15 @@ end $$;
 -- teacher_id 로 좁혀 자기가 담당한 학생만 다루게 한다.
 -- (teacher_id 가 빈 학생은 담당 교사가 다룰 수 없다. 학생 계정은 초대코드 가입과
 --  create-student API 양쪽 모두 teacher_id 를 채운다)
+--
+-- ⚠ 수정·삭제 정책에만 조건을 넣으면 안 된다. PostgreSQL 은 «행을 읽어야 하는»
+--   update/delete (where 절이 있는 경우)에 select 정책도 함께 적용한다.
+--   그래서 여기 빠진 조건은 수정·삭제까지 조용히 막는다 — 결과가 오류가 아니라
+--   «0행» 으로 나와서 원인을 찾기 어렵다. 실제로 겪었다.
 create policy "profiles_select" on profiles for select using (
   auth.uid() = id
   or (is_my_student(id) and is_teacher())   -- 내가 담당하는 반의 학생
+  or is_my_owned_student(id)                -- 내가 만든 반의 학생 (배정 전이라도)
   or teacher_id = auth.uid()                -- 담임으로 등록된 학생 (반 배정 전이라도)
   -- 학생이 쪽지 발신자(선생님) 이름을 표시할 수 있어야 한다
   or id = current_user_teacher_id()
