@@ -9,7 +9,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Plus, Trash2, Award } from 'lucide-react'
+import { Plus, Trash2, Award, Share2, Globe, Users, Download } from 'lucide-react'
+import ShareDialog from '@/components/ShareDialog'
 import type { Badge } from '@/lib/types'
 
 const BADGE_ICONS = ['🏅', '⭐', '🌟', '🎖️', '🏆', '🎗️', '💎', '🌈', '🔥', '💡', '📚', '✏️', '🎨', '🎭', '🎵', '🌱', '🦋', '🚀', '🏃', '🤝', '❤️', '🧡', '💛', '💚', '💙', '💜', '🩷', '🤍']
@@ -24,12 +25,32 @@ export default function BadgesPage() {
   const [criteria, setCriteria] = useState('')
   const [icon, setIcon] = useState('🏅')
   const [saving, setSaving] = useState(false)
+  /** 공유 창을 연 배지 */
+  const [sharing, setSharing] = useState<Badge | null>(null)
+  /** 배지 id → 공유 상태. 목록에 «공유 중» 을 표시한다 */
+  const [shares, setShares] = useState<Record<string, { all: boolean; count: number }>>({})
 
   const fetchBadges = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { data } = await supabase.from('badges').select('*').eq('teacher_id', user.id).order('created_at')
     setBadges(data ?? [])
+
+    // 내 배지의 공유 상태. 목록에서 «누구에게 공유 중인지» 를 바로 보이게 한다.
+    const ids = (data ?? []).map(b => b.id)
+    if (ids.length) {
+      const { data: sh } = await supabase.from('badge_shares').select('badge_id, shared_with').in('badge_id', ids)
+      const m: Record<string, { all: boolean; count: number }> = {}
+      for (const r of sh ?? []) {
+        const e = m[r.badge_id] ?? { all: false, count: 0 }
+        if (r.shared_with === null) e.all = true
+        else e.count++
+        m[r.badge_id] = e
+      }
+      setShares(m)
+    } else {
+      setShares({})
+    }
     setLoading(false)
   }, [supabase])
 
@@ -126,11 +147,26 @@ export default function BadgesPage() {
           {badges.map(b => (
             <Card key={b.id} className="hover:shadow-md transition-shadow">
               <CardContent className="p-4 text-center relative">
-                <button
-                  className="absolute top-2 right-2 text-gray-300 hover:text-red-400 transition-colors"
-                  onClick={() => deleteBadge(b.id, b.name)}>
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                  <button title="다른 교사에게 공유"
+                    className="text-gray-300 hover:text-blue-500 transition-colors"
+                    onClick={() => setSharing(b)}>
+                    <Share2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button title="삭제"
+                    className="text-gray-300 hover:text-red-400 transition-colors"
+                    onClick={() => deleteBadge(b.id, b.name)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                {/* 공유받아 가져온 사본이라는 표시. 원본이 지워지면 copied_from 이
+                    null 이 되어 이 표시도 사라진다 — 사본 자체는 남는다. */}
+                {b.copied_from && (
+                  <span title="공유받아 가져온 사본"
+                    className="absolute top-2 left-2 text-gray-300">
+                    <Download className="w-3.5 h-3.5" />
+                  </span>
+                )}
                 <div className="text-4xl mb-2">{b.icon}</div>
                 <h3 className="font-semibold text-gray-900 text-sm">{b.name}</h3>
                 {b.description && <p className="text-xs text-gray-500 mt-1">{b.description}</p>}
@@ -139,10 +175,22 @@ export default function BadgesPage() {
                     {b.criteria}
                   </div>
                 )}
+                {shares[b.id] && (shares[b.id].all || shares[b.id].count > 0) && (
+                  <div className="mt-2 flex items-center justify-center gap-1 text-xs text-blue-600">
+                    {shares[b.id].all
+                      ? <><Globe className="w-3 h-3" />전체 공유 중</>
+                      : <><Users className="w-3 h-3" />{shares[b.id].count}명에게 공유 중</>}
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
+      )}
+
+      {sharing && (
+        <ShareDialog kind="badge" resourceId={sharing.id} resourceName={sharing.name}
+          open={!!sharing} onOpenChange={v => !v && setSharing(null)} onChanged={fetchBadges} />
       )}
     </div>
   )

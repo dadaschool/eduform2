@@ -18,6 +18,7 @@ import {
   GraduationCap,
   School,
   MessageCircle,
+  Share2,
 } from 'lucide-react'
 
 const navItems = [
@@ -29,6 +30,7 @@ const navItems = [
   { href: '/teacher/observations', label: '관찰일지', icon: Eye },
   { href: '/teacher/records', label: '학생부 초안', icon: FileText },
   { href: '/teacher/badges', label: '디지털 배지', icon: Award },
+  { href: '/teacher/shared', label: '공유 자료', icon: Share2 },
   { href: '/teacher/messages', label: '쪽지함', icon: MessageCircle },
   { href: '/teacher/account', label: '내 계정', icon: UserCog },
 ]

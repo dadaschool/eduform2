@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Plus, Search, Trash2, ClipboardList, Users } from 'lucide-react'
+import { Plus, Search, Trash2, ClipboardList, Users, Share2, Globe, Download } from 'lucide-react'
+import ShareDialog from '@/components/ShareDialog'
 import { formatDate } from '@/lib/utils'
 import type { Assessment, Class } from '@/lib/types'
 
@@ -17,6 +18,10 @@ interface AssessmentWithStats extends Assessment {
   itemCount: number
   classNames: string[]
   hasChecks: boolean
+  /** 전체 공유 중인가 */
+  shareAll: boolean
+  /** 개별 공유한 교사 수 */
+  shareCount: number
 }
 
 export default function AssessmentsPage() {
@@ -27,6 +32,8 @@ export default function AssessmentsPage() {
   const [search, setSearch] = useState('')
   const [filterClass, setFilterClass] = useState('all')
   const [filterSubject, setFilterSubject] = useState('all')
+  /** 공유 창을 연 평가 */
+  const [sharing, setSharing] = useState<AssessmentWithStats | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -38,6 +45,20 @@ export default function AssessmentsPage() {
       supabase.from('classes').select('*').eq('teacher_id', user.id),
     ])
     setClasses(cls ?? [])
+
+    // 공유 상태는 평가 전체를 한 번에 읽는다. 평가마다 따로 읽으면
+    // 목록이 눈에 띄게 느려진다 (평가 수만큼 왕복이 늘어난다).
+    const shareMap: Record<string, { all: boolean; count: number }> = {}
+    if (asmts?.length) {
+      const { data: sh } = await supabase.from('assessment_shares')
+        .select('assessment_id, shared_with').in('assessment_id', asmts.map(a => a.id))
+      for (const r of sh ?? []) {
+        const e = shareMap[r.assessment_id] ?? { all: false, count: 0 }
+        if (r.shared_with === null) e.all = true
+        else e.count++
+        shareMap[r.assessment_id] = e
+      }
+    }
 
     if (asmts) {
       const enriched = await Promise.all(asmts.map(async a => {
@@ -52,7 +73,11 @@ export default function AssessmentsPage() {
             ),
         ])
         const classNames = (ac ?? []).map(r => cls?.find(c => c.id === r.class_id)?.name ?? '').filter(Boolean)
-        return { ...a, itemCount: count ?? 0, classNames, hasChecks: (checkCount ?? 0) > 0 }
+        return {
+          ...a, itemCount: count ?? 0, classNames, hasChecks: (checkCount ?? 0) > 0,
+          shareAll: shareMap[a.id]?.all ?? false,
+          shareCount: shareMap[a.id]?.count ?? 0,
+        }
       }))
       setAssessments(enriched)
     }
@@ -135,12 +160,32 @@ export default function AssessmentsPage() {
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle className="text-lg">{a.title}</CardTitle>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
                       {a.subject && <Badge variant="secondary">{a.subject}</Badge>}
                       <span className="text-xs text-gray-400">{formatDate(a.created_at)}</span>
+                      {a.shareAll ? (
+                        <span className="flex items-center gap-1 text-xs text-blue-600">
+                          <Globe className="w-3 h-3" />전체 공유 중
+                        </span>
+                      ) : a.shareCount > 0 ? (
+                        <span className="flex items-center gap-1 text-xs text-blue-600">
+                          <Users className="w-3 h-3" />{a.shareCount}명에게 공유 중
+                        </span>
+                      ) : null}
+                      {/* 공유받아 가져온 사본. 원본이 지워지면 copied_from 이 null 이
+                          되어 이 표시만 사라진다 — 평가와 채점 결과는 남는다. */}
+                      {a.copied_from && (
+                        <span className="flex items-center gap-1 text-xs text-gray-400" title="공유받아 가져온 사본">
+                          <Download className="w-3 h-3" />가져온 평가
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex gap-1">
+                    <Button variant="outline" size="sm" className="gap-1" onClick={() => setSharing(a)}
+                      title="다른 교사에게 공유">
+                      <Share2 className="w-3.5 h-3.5" />공유
+                    </Button>
                     <Link href={`/teacher/assessments/${a.id}/check`}>
                       <Button variant="outline" size="sm" className="gap-1">
                         <ClipboardList className="w-3.5 h-3.5" />
@@ -181,6 +226,11 @@ export default function AssessmentsPage() {
             </Card>
           ))}
         </div>
+      )}
+
+      {sharing && (
+        <ShareDialog kind="assessment" resourceId={sharing.id} resourceName={sharing.title}
+          open={!!sharing} onOpenChange={v => !v && setSharing(null)} onChanged={fetchData} />
       )}
     </div>
   )
