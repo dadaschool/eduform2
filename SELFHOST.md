@@ -5,7 +5,42 @@
 
 클라우드(Vercel + Supabase)로 쓰실 거면 이 문서가 아니라 [SETUP.md](SETUP.md) 를 보세요.
 
-> 예상 소요: 처음이면 1~2시간.
+> 예상 소요: 처음이면 1~2시간. **아래 설치 파일을 쓰면 20~30분.**
+
+---
+
+## 빠른 길 — 설치 파일 하나로
+
+아래 절차를 하나로 묶은 스크립트가 있습니다. 관리자 PowerShell 에서 두 줄:
+
+```powershell
+irm https://raw.githubusercontent.com/dadaschool/eduform2/main/install.ps1 -OutFile "$env:TEMP\install.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\install.ps1" -ServerIp 10.91.10.127
+```
+
+`-ServerIp` 는 **교사·학생이 접속할 이 컴퓨터의 IP** 입니다. 브라우저가 이 주소로
+직접 붙기 때문에 틀리면 다른 기기에서 로그인이 안 됩니다.
+
+바꾸지 않고 점검만 하려면 `-CheckOnly` 를 붙이세요.
+
+| 옵션 | |
+|---|---|
+| `-CheckOnly` | 사양·프로그램만 확인하고 끝냅니다 |
+| `-SkipPrereqs` | Git · Node · PostgreSQL 설치를 건너뜁니다 |
+| `-NoService` | 작업 스케줄러·방화벽 설정을 건너뜁니다 |
+| `-Root C:\srv` | 설치 위치 |
+| `-AppPort 3000` `-ApiPort 3001` | 포트 |
+
+스크립트가 하는 일 — 사양 확인 → 프로그램 설치 → PostgREST 내려받기 →
+소스 받기 → 키 생성(되읽어 대조) → 표 만들기 → 관리자 계정 → 빌드 →
+서비스 등록 → 방화벽 → 응답 점검.
+
+**중간에 두 번 물어봅니다.** PostgreSQL 비밀번호(설치 창에서 정한 것)와
+관리자 계정의 이메일·이름·비밀번호입니다. 비밀번호는 화면에 보이지 않고
+파일에 남지 않습니다.
+
+멈추면 그 자리에서 이유를 알려줍니다. 아래 단계별 설명은 **손으로 하실 때나
+스크립트가 멈춘 곳을 들여다볼 때** 보세요.
 
 ---
 
