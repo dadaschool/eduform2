@@ -625,7 +625,12 @@ export default function AdminUsersPage() {
                   </span>
                   <span className="font-medium text-gray-800">{r.name}</span>
                   <span className="text-gray-500">{r.email}</span>
-                  {r.message && <span className="text-red-500 ml-auto text-right">{r.message}</span>}
+                  {/* 성공한 줄의 메모(«2-1 담임» 같은 것)까지 빨갛게 나오면 오류처럼 보인다 */}
+                  {r.message && (
+                    <span className={`ml-auto text-right ${
+                      r.status === 'failed' ? 'text-red-500' : 'text-gray-500'
+                    }`}>{r.message}</span>
+                  )}
                 </div>
               ))}
             </div>
