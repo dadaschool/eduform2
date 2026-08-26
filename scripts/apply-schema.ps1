@@ -34,12 +34,24 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# psql 은 UTF-8 로 알림을 내보내는데, 한국어 윈도우 콘솔은 CP949 로 읽어 글자가
-# 깨진다. 알림이 깨지면 «오류인가?» 하고 놀라게 되므로 먼저 맞춰 둔다.
+# psql 은 UTF-8 로 내보내는데 한국어 윈도우 콘솔은 CP949 로 읽어 글자가 깨진다.
+#
+#  · [Console]::OutputEncoding 은 «PowerShell 이 받아 담을 때» 만 듣는다
+#  · psql 이 콘솔에 «직접» 쓰는 줄(알림·오류)은 콘솔 코드페이지가 결정한다
+#
+# 그래서 둘을 다 맞춘다. 코드페이지는 끝에 되돌린다.
+$oldCodePage = $null
 try {
   [Console]::OutputEncoding = [Text.Encoding]::UTF8
   $OutputEncoding = [Text.Encoding]::UTF8
+  $oldCodePage = (chcp) -replace '[^0-9]', ''
+  chcp 65001 > $null
 } catch { }
+
+# «이미 있으므로 건너뜁니다» 류의 알림을 아예 끈다.
+# 여러 번 실행하는 스크립트라 알림이 수십 줄 쏟아지고, 그걸 보고 오류라고
+# 놀라게 된다. 경고와 오류는 그대로 나온다.
+$env:PGOPTIONS = '-c client_min_messages=warning'
 
 if (-not $Repo) { $Repo = Split-Path -Parent (Split-Path -Parent $PSCommandPath) }
 $psql = Join-Path $PgBin 'psql.exe'
@@ -139,4 +151,6 @@ try {
 }
 finally {
   $env:PGPASSWORD = $null
+  $env:PGOPTIONS = $null
+  if ($oldCodePage) { chcp $oldCodePage > $null }
 }
