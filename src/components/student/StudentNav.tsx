@@ -1,10 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
-import { toast } from 'sonner'
 import { LayoutDashboard, BookOpen, Award, User, LogOut, GraduationCap, MessageCircle } from 'lucide-react'
 
 const navItems = [
@@ -19,13 +18,13 @@ interface StudentNavProps { studentName: string }
 
 export default function StudentNav({ studentName }: StudentNavProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const supabase = createClient()
 
   async function handleLogout() {
     await supabase.auth.signOut()
-    toast.success('로그아웃되었습니다.')
-    router.push('/student-login')
+    // 캐시된 서버 화면이 남지 않게 «새로» 불러온다. router.push 로는
+    // 다른 계정으로 로그인해도 앞사람 이름이 그대로 보일 수 있다.
+    window.location.replace('/student-login')
   }
 
   return (

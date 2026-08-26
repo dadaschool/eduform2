@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -13,7 +12,6 @@ import { BookOpen, GraduationCap } from 'lucide-react'
 import { routeForRole } from '@/lib/route-for-role'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -32,7 +30,9 @@ export default function LoginPage() {
       const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
       // 보낼 곳은 routeForRole 한 곳에서 정한다. 역할을 빼먹으면 레이아웃끼리
       // 서로 밀어내 무한 리다이렉트가 된다.
-      router.push(profile ? routeForRole(profile.role) : '/student/dashboard')
+      // location.replace 로 «새로» 불러온다. router.push 는 브라우저에 남아 있는
+      // 이전 사용자의 서버 화면을 그대로 보여줄 수 있다.
+      window.location.replace(profile ? routeForRole(profile.role) : '/student/dashboard')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '로그인에 실패했습니다.')
     } finally {

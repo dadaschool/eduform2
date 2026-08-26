@@ -30,6 +30,7 @@ export default function ClassesPage() {
   const [newClassDesc, setNewClassDesc] = useState('')
   const [saving, setSaving] = useState(false)
   const [me, setMe] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
 
   const fetchClasses = useCallback(async () => {
     setLoading(true)
@@ -39,6 +40,10 @@ export default function ClassesPage() {
 
     // 학교의 모든 반을 보여준다. 예전에는 내가 만든 반(teacher_id)만 보여서
     // 같은 반을 교사마다 따로 만들어 이름이 겹치는 반이 생겼다.
+    // select('*') — is_admin 컬럼이 없는 DB 에서도 조회가 실패하지 않아야 한다
+    const { data: meProf } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
+    setIsAdmin(meProf?.is_admin === true)
+
     const [{ data: cls }, { data: assigns }] = await Promise.all([
       supabase.from('classes').select('*').order('year', { ascending: false }).order('name'),
       supabase.from('class_teachers').select('class_id, teacher_id, role'),
@@ -76,7 +81,27 @@ export default function ClassesPage() {
   }, [supabase])
 
   /** 이 반을 담당하겠다고 등록한다 (요구사항: 관리자가 넣은 목록에서 교사가 고른다) */
+  /**
+   * 담임을 정할 수 있는가.
+   *
+   * 담임은 그 반 학생의 이름·반배정·삭제 권한까지 갖는 자리다. 그래서 아무 교사나
+   * 스스로 집어 갈 수 없게 «관리자» 와 «그 반을 만든 교사» 로 좁혔다.
+   * DB 정책도 같이 막고 있다 (class_teachers_insert / _delete).
+   */
+  function canSetHomeroom(cls: ClassWithStats) {
+    return isAdmin || cls.teacher_id === me
+  }
+
   async function joinClass(classId: string, role: 'homeroom' | 'subject') {
+    if (role === 'homeroom') {
+      const cls = classes.find(c => c.id === classId)
+      if (cls && !canSetHomeroom(cls)) {
+        toast.error('담임 배정은 관리자가 정합니다', {
+          description: '직접 만든 반은 스스로 정할 수 있습니다',
+        })
+        return
+      }
+    }
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     const { error } = await supabase.from('class_teachers').insert({
@@ -235,10 +260,16 @@ export default function ClassesPage() {
                           <Users className="w-3 h-3" />
                           {cls.studentCount}명
                         </Badge>
-                        <Button variant="ghost" size="sm" className="text-xs text-gray-500 hover:text-red-600"
-                          onClick={() => leaveClass(cls.id, cls.name)}>
-                          담당 해제
-                        </Button>
+                        {(cls.myRole === 'subject' || canSetHomeroom(cls)) ? (
+                          <Button variant="ghost" size="sm" className="text-xs text-gray-500 hover:text-red-600"
+                            onClick={() => leaveClass(cls.id, cls.name)}>
+                            담당 해제
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-gray-400" title="담임 배정은 관리자가 정합니다">
+                            담임 해제는 관리자
+                          </span>
+                        )}
                         {cls.teacher_id === me && (
                           <Button variant="ghost" size="icon" className="text-red-400 hover:text-red-600 hover:bg-red-50"
                             title="반 삭제" onClick={() => deleteClass(cls.id, cls.name)}>
@@ -247,11 +278,13 @@ export default function ClassesPage() {
                         )}
                       </>
                     ) : (
-                      <div className="flex gap-1">
-                        <Button size="sm" variant="outline" className="gap-1"
-                          onClick={() => joinClass(cls.id, 'homeroom')}>
-                          담임으로 담당
-                        </Button>
+                      <div className="flex gap-1 items-center">
+                        {canSetHomeroom(cls) && (
+                          <Button size="sm" variant="outline" className="gap-1"
+                            onClick={() => joinClass(cls.id, 'homeroom')}>
+                            담임으로 담당
+                          </Button>
+                        )}
                         <Button size="sm" className="gap-1"
                           onClick={() => joinClass(cls.id, 'subject')}>
                           교과로 담당

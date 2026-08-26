@@ -24,6 +24,8 @@ export default function AdminClassesPage() {
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  const [teachers, setTeachers] = useState<{ id: string; name: string }[]>([])
+  const [assigning, setAssigning] = useState('')
   const [openCreate, setOpenCreate] = useState(false)
   const [name, setName] = useState('')
   const [year, setYear] = useState(String(new Date().getFullYear()))
@@ -31,11 +33,13 @@ export default function AdminClassesPage() {
   const [saving, setSaving] = useState(false)
 
   const fetchAll = useCallback(async () => {
-    const [{ data: cls }, { data: assigns }, { data: studs }] = await Promise.all([
+    const [{ data: cls }, { data: assigns }, { data: studs }, { data: tchs }] = await Promise.all([
       supabase.from('classes').select('*').order('year', { ascending: false }).order('name'),
       supabase.from('class_teachers').select('class_id, teacher_id, role'),
       supabase.from('profiles').select('id, class_id').eq('role', 'student'),
+      supabase.from('profiles').select('id, name').eq('role', 'teacher').order('name'),
     ])
+    setTeachers(tchs ?? [])
     const teacherIds = [...new Set((assigns ?? []).map(a => a.teacher_id))]
     const { data: profs } = teacherIds.length
       ? await supabase.from('profiles').select('id, name').in('id', teacherIds)
@@ -85,6 +89,29 @@ export default function AdminClassesPage() {
     const { error } = await supabase.from('classes').delete().eq('id', id)
     if (error) toast.error(error.message)
     else { toast.success('삭제되었습니다.'); fetchAll() }
+  }
+
+  /**
+   * 담임·교과 담당을 «지정» 한다.
+   *
+   * 교사 화면에서는 담임을 스스로 고를 수 없다 (그 반을 만든 교사만 예외).
+   * 담임은 학생의 이름·반배정·삭제 권한까지 갖는 자리라서다. 그래서 관리자가
+   * 정해 주는 수단이 여기 있어야 한다.
+   */
+  async function assignTeacher(classId: string, teacherId: string, role: 'homeroom' | 'subject') {
+    if (!teacherId) return
+    setAssigning(classId)
+    try {
+      const { error } = await supabase.from('class_teachers')
+        .upsert({ class_id: classId, teacher_id: teacherId, role }, { onConflict: 'class_id,teacher_id' })
+      if (error) throw error
+      toast.success(role === 'homeroom' ? '담임으로 지정했습니다.' : '교과 담당으로 지정했습니다.')
+      fetchAll()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : '지정 실패')
+    } finally {
+      setAssigning('')
+    }
   }
 
   /** 관리자가 배정을 정리한다 (교사가 잘못 담당한 경우) */
@@ -240,7 +267,8 @@ export default function AdminClassesPage() {
                   </div>
                 </div>
 
-                <div className="mt-3 pt-3 border-t flex items-center gap-2 flex-wrap">
+                <div className="mt-3 pt-3 border-t space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs text-gray-400">담당 교사</span>
                   {c.teachers.length === 0 ? (
                     <span className="text-xs text-amber-600">아직 없음 — 교사가 직접 고릅니다</span>
@@ -258,6 +286,36 @@ export default function AdminClassesPage() {
                       </span>
                     ))
                   )}
+                </div>
+
+                {/* 담임 지정 — 교사는 스스로 담임이 될 수 없으므로 여기서 정한다 */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-gray-400">지정</span>
+                  <select
+                    className="h-7 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700"
+                    disabled={assigning === c.id}
+                    defaultValue=""
+                    onChange={e => {
+                      const [tid, role] = e.target.value.split('|')
+                      e.currentTarget.value = ''
+                      if (tid) assignTeacher(c.id, tid, role as 'homeroom' | 'subject')
+                    }}>
+                    <option value="">교사를 고르세요</option>
+                    <optgroup label="담임으로">
+                      {teachers.map(t => (
+                        <option key={`h-${t.id}`} value={`${t.id}|homeroom`}>{t.name}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="교과 담당으로">
+                      {teachers.map(t => (
+                        <option key={`s-${t.id}`} value={`${t.id}|subject`}>{t.name}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                  {c.teachers.some(t => t.role === 'homeroom') || (
+                    <span className="text-xs text-amber-600">담임이 없습니다</span>
+                  )}
+                </div>
                 </div>
               </CardContent>
             </Card>

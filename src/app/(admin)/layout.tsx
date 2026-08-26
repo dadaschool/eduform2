@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { ShieldCheck, Users, School, LogOut, GraduationCap } from 'lucide-react'
+import { ShieldCheck, Users, School, GraduationCap } from 'lucide-react'
+import LogoutButton from '@/components/LogoutButton'
 import NoProfileNotice from '@/components/NoProfileNotice'
 import { routeForRole } from '@/lib/route-for-role'
 
@@ -63,10 +64,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
         </div>
         <div className="p-2 border-t">
-          <Link href="/login"
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-100">
-            <LogOut className="w-4 h-4" />로그아웃
-          </Link>
+          <LogoutButton />
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto">{children}</main>

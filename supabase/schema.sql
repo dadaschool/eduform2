@@ -442,6 +442,35 @@ as $$
   )
 $$;
 
+/**
+ * 이 반을 «내가 만들었는가».
+ *
+ * 관리자가 아니어도 자기가 만든 반은 자기가 꾸린다 — 그 반의 담임을 정하고
+ * 빼고, 학생을 넣고 지운다. 학년 초에 관리자 한 사람을 기다리지 않아도
+ * 각자 자기 반을 세울 수 있어야 한다.
+ * classes.teacher_id 가 «만든 사람» 이다 (담당이 아니다 — 담당은 class_teachers).
+ */
+create or replace function is_class_owner(p_class_id uuid)
+returns boolean
+language sql security definer stable set search_path = public
+as $$
+  select exists (
+    select 1 from classes where id = p_class_id and teacher_id = auth.uid()
+  )
+$$;
+
+/** 내가 만든 반에 속한 학생인가. */
+create or replace function is_my_owned_student(p_student_id uuid)
+returns boolean
+language sql security definer stable set search_path = public
+as $$
+  select exists (
+    select 1 from profiles p
+    join classes c on c.id = p.class_id
+    where p.id = p_student_id and c.teacher_id = auth.uid()
+  )
+$$;
+
 -- 이 교사가 내(학생) 반을 담당하는가.
 -- 학생 화면에서 담당 교사 이름을 표시하고 쪽지 상대를 고를 때 쓴다.
 -- 예전에는 담임(profiles.teacher_id) 한 명만 볼 수 있어서, 교과 교사가
@@ -627,6 +656,7 @@ create policy "profiles_select" on profiles for select using (
 create policy "profiles_update" on profiles for update using (
   auth.uid() = id
   or is_my_homeroom_student(id)
+  or is_my_owned_student(id)                      -- 내가 만든 반의 학생
   or (teacher_id = auth.uid() and is_teacher())   -- 반 배정 전 학생
   or is_admin()
 ) with check (
@@ -638,6 +668,7 @@ create policy "profiles_update" on profiles for update using (
 -- 삭제는 담임과 관리자만. 교과 담당은 못 지운다.
 create policy "profiles_delete" on profiles for delete using (
   is_my_homeroom_student(id)
+  or is_my_owned_student(id)                      -- 내가 만든 반의 학생
   or (teacher_id = auth.uid() and is_teacher())   -- 반 배정 전 학생
   or is_admin()
 );
@@ -680,13 +711,27 @@ create policy "classes_student_select" on classes for select using (
 create policy "class_teachers_select" on class_teachers for select using (
   is_teacher() or is_admin()
 );
+-- 담임 배정은 «관리자와 그 반을 만든 교사» 만 한다.
+--
+-- 예전에는 아무 교사나 아무 반의 «담임으로 담당» 을 눌러 스스로 담임이 될 수
+-- 있었고, 남이 맡은 담임을 해제할 수도 있었다. 담임은 그 반 학생의 이름·반배정·
+-- 삭제 권한까지 갖는 자리라 스스로 집어 갈 수 있으면 안 된다.
+--
+-- 교과 담당은 그대로 교사가 스스로 고른다 — 여러 반에 수업을 들어가는 것은
+-- 본인이 가장 잘 알고, 조회 권한만 늘어난다.
 create policy "class_teachers_insert" on class_teachers for insert with check (
-  (teacher_id = auth.uid() and is_teacher()) or is_admin()
+  is_admin()
+  or is_class_owner(class_id)
+  or (teacher_id = auth.uid() and is_teacher() and role = 'subject')
 );
 create policy "class_teachers_delete" on class_teachers for delete using (
-  (teacher_id = auth.uid() and is_teacher()) or is_admin()
+  is_admin()
+  or is_class_owner(class_id)
+  or (teacher_id = auth.uid() and is_teacher() and role = 'subject')
 );
-create policy "class_teachers_update" on class_teachers for update using (is_admin());
+create policy "class_teachers_update" on class_teachers for update using (
+  is_admin() or is_class_owner(class_id)
+);
 
 -- invite_codes: 교사 관리
 -- 학생용 코드는 담당 교사가, 교사용 코드는 관리자만 발급한다.

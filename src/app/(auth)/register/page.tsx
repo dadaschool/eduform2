@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -12,7 +11,6 @@ import { toast } from 'sonner'
 import { GraduationCap } from 'lucide-react'
 
 export default function RegisterPage() {
-  const router = useRouter()
   const [step, setStep] = useState<'code' | 'info'>('code')
   const [inviteCode, setInviteCode] = useState('')
   const [inviteKind, setInviteKind] = useState<'student' | 'teacher'>('student')
@@ -70,7 +68,7 @@ export default function RegisterPage() {
       if (regError) throw new Error(regError.message)
 
       toast.success('회원가입이 완료되었습니다!')
-      router.push(inviteKind === 'teacher' ? '/teacher/dashboard' : '/student/dashboard')
+      window.location.replace(inviteKind === 'teacher' ? '/teacher/dashboard' : '/student/dashboard')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '회원가입에 실패했습니다.')
     } finally {

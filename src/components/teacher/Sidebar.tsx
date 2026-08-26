@@ -1,10 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
-import { toast } from 'sonner'
 import {
   LayoutDashboard,
   Users,
@@ -42,13 +41,13 @@ interface SidebarProps {
 
 export default function Sidebar({ teacherName, isAdmin = false }: SidebarProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const supabase = createClient()
 
   async function handleLogout() {
     await supabase.auth.signOut()
-    toast.success('로그아웃되었습니다.')
-    router.push('/login')
+    // router.push 로는 안 된다. App Router 가 서버 컴포넌트 결과를 캐시해 두어
+    // 다른 계정으로 로그인해도 앞사람 이름이 그대로 보인다. 실제로 겪었다.
+    window.location.replace('/login')
   }
 
   return (
