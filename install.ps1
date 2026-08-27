@@ -235,6 +235,7 @@ if (-not $keepExisting) {
   $exp = $iat + (10 * 365 * 24 * 60 * 60)
   $jwtSecret = New-Secret 48
   $authPw    = New-Secret 32
+  $aiKeySecret = New-Secret 48
   $anonKey    = New-Jwt @{ role = 'anon';         iss = 'supabase'; iat = $iat; exp = $exp } $jwtSecret
   $serviceKey = New-Jwt @{ role = 'service_role'; iss = 'supabase'; iat = $iat; exp = $exp } $jwtSecret
 
@@ -253,10 +254,17 @@ SUPABASE_JWT_SECRET=$jwtSecret
 AUTH_DB_URL=postgresql://postgres:$pgPw@127.0.0.1:5432/postgres
 POSTGREST_URL=http://127.0.0.1:$ApiPort
 
-# AI 기능(평가 항목 추천 · 생활기록부 초안)만 바깥 인터넷을 씁니다.
-# 없으면 그 두 기능만 안 되고 나머지는 정상입니다.
+# 교사별 AI API 키를 암호화해 DB 에 넣을 때 쓰는 열쇠입니다. 자동 생성했습니다.
+# 이 값을 잃어버리거나 바꾸면 교사들이 이미 등록한 키를 다시 넣어야 합니다.
+AI_KEY_SECRET=$aiKeySecret
+
+# AI 기능(평가 항목 추천 · 생활기록부 초안)은 교사가 «내 계정» 화면에서
+# 자기 API 키(업스테이지 / Gemini / OpenAI)를 직접 등록해 씁니다.
+# 아래 세 칸은 «관리자 계정 전용» 학교 공용 폴백입니다. 비워 두어도 됩니다 —
+# 그러면 관리자도 자기 키를 등록해야 합니다. AI 만 바깥 인터넷을 씁니다.
 GEMINI_API_KEY=
 UPSTAGE_API_KEY=
+OPENAI_API_KEY=
 "@ | Set-Content -Encoding UTF8 $envLocal
 
   @"

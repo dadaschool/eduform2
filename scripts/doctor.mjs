@@ -27,12 +27,17 @@ for (const k of REQUIRED) {
   else fail(`${k} 없음`, `.env.local 에 ${k} 를 넣으세요 (.env.example 참고)`)
 }
 
-const hasGemini = Boolean(env.GEMINI_API_KEY)
-const hasUpstage = Boolean(env.UPSTAGE_API_KEY)
-if (hasGemini || hasUpstage) {
-  console.log(ok(`AI 키: ${[hasGemini && 'Gemini', hasUpstage && '업스테이지'].filter(Boolean).join(' + ')}`))
+if (env.AI_KEY_SECRET && env.AI_KEY_SECRET.length >= 16) {
+  console.log(ok('AI_KEY_SECRET 설정됨 (교사별 AI 키 암호화)'))
 } else {
-  console.log(warn('AI 키가 없습니다 — 평가 항목 추천, 생활기록부 초안 두 기능만 못 씁니다'))
+  fail('AI_KEY_SECRET 없음(또는 너무 짧음)', '.env.local 에 AI_KEY_SECRET 로 32자 이상 임의 문자열을 넣으세요 — 교사가 AI 키를 저장할 때 필요합니다')
+}
+
+const envAi = ['GEMINI_API_KEY', 'UPSTAGE_API_KEY', 'OPENAI_API_KEY'].filter((k) => env[k])
+if (envAi.length) {
+  console.log(ok(`학교 공용 AI 키(관리자 폴백 전용): ${envAi.join(', ')}`))
+} else {
+  console.log(warn('학교 공용 AI 키 없음 — 교사·관리자 모두 «내 계정» 에서 각자 AI 키를 등록해야 합니다'))
 }
 if (env.SUPABASE_DB_URL) console.log(ok('SUPABASE_DB_URL 설정됨 (npm run db:setup 사용 가능)'))
 
@@ -74,7 +79,8 @@ const TABLES = {
   assessments: 'id', assessment_classes: 'assessment_id', assessment_items: 'id',
   student_assessment_checks: 'id', assignments: 'id', assignment_classes: 'assignment_id',
   assignment_submissions: 'id', observations: 'id', student_record_drafts: 'id', messages: 'id',
-  class_teachers: 'class_id',
+  class_teachers: 'class_id', badge_shares: 'id', assessment_shares: 'id',
+  teacher_ai_keys: 'teacher_id',
 }
 const missing = []
 const counts = {}
@@ -168,9 +174,13 @@ if (!missing.includes('profiles')) {
 }
 
 // ─────────────────────────────────────────────
-console.log(head('7. AI 키'))
+// 여기서 보는 건 «학교 공용(관리자 폴백)» env 키뿐이다. 교사 개인 키는
+// teacher_ai_keys 에 암호화돼 있어 doctor 가 확인하지 않는다.
+console.log(head('7. 학교 공용 AI 키 (관리자 폴백)'))
+const hasGemini = Boolean(env.GEMINI_API_KEY)
+const hasUpstage = Boolean(env.UPSTAGE_API_KEY)
 if (!hasGemini && !hasUpstage) {
-  console.log(warn('건너뜀 (키 없음)'))
+  console.log(warn('건너뜀 (공용 키 없음 — 교사·관리자가 «내 계정» 에서 각자 등록)'))
 } else {
   // 교내 서버는 바깥으로 나가는 통신이 막혀 있을 수 있다. 그때 방화벽이 패킷을
   // 버리면 fetch 가 2분 넘게 멈춰 있고, DNS 가 안 되면 예외가 그대로 터져 나와
@@ -213,7 +223,7 @@ if (!hasGemini && !hasUpstage) {
     else {
       const body = await res.text()
       console.log(warn(`Gemini HTTP ${res.status} — ${body.includes('limit: 0') ? '무료등급 할당량 0' : body.slice(0, 90)}`))
-      if (hasUpstage) console.log(`  ${c.dim}업스테이지가 있으니 자동으로 그쪽을 씁니다. AI_PRIMARY=upstage 로 두면 더 빠릅니다.${c.reset}`)
+      if (hasUpstage) console.log(`  ${c.dim}업스테이지 공용 키가 있으니 자동으로 그쪽으로 넘어갑니다.${c.reset}`)
       else todo.push('Gemini 가 막혀 있습니다. UPSTAGE_API_KEY 를 넣거나 개인 Google 계정으로 키를 재발급하세요')
     }
   }

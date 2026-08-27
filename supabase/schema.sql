@@ -271,6 +271,36 @@ create unique index if not exists assessment_shares_one_for_all
   on assessment_shares (assessment_id) where shared_with is null;
 
 -- =============================================
+-- 교사별 AI API 키
+-- =============================================
+-- AI 기능(평가 항목 추천 · 생활기록부 초안)은 교사가 «자기» API 키로 쓴다.
+-- 학교 공용 키 하나를 쓰지 않는 이유 —
+--   · 무료 등급 할당량이 교사 수만큼 나뉘어 금방 바닥난다
+--   · 유료 키라면 한 교사의 사용량이 전체 요금이 된다
+--   · 키를 코드/서버 파일에 두면 바꿀 때마다 파일을 고치고 재시작해야 한다
+--
+-- provider 는 upstage / gemini / openai 셋. 교사는 1개 이상 등록하고, priority
+-- 순서대로 시도하다 오류(할당량 초과·인증 실패·타임아웃)가 나면 다음으로 넘어간다.
+--
+-- api_key_enc 는 AES-256-GCM 로 암호화해 넣는다 (평문 아님). 복호화 키는
+-- 서버 환경변수 AI_KEY_SECRET 하나뿐이고 DB 에는 없다. 그래서 DB 백업이나
+-- psql 로 이 표를 통째로 읽어도 실제 키는 나오지 않는다. 자세한 형식은
+-- src/lib/ai-crypto.ts.
+--
+-- hint 는 키 끝 4자리. 화면에 «••••1234» 로 어느 키인지만 알려주는 용도이고,
+-- 원본 키는 저장 뒤 다시는 클라이언트로 내려가지 않는다 (전용 API 라우트가
+-- service_role 로만 복호화해 쓴다).
+create table if not exists teacher_ai_keys (
+  teacher_id uuid not null references auth.users(id) on delete cascade,
+  provider   text not null check (provider in ('upstage', 'gemini', 'openai')),
+  api_key_enc text not null,
+  hint       text not null default '',
+  priority   int  not null default 0,
+  updated_at timestamptz default now(),
+  primary key (teacher_id, provider)
+);
+
+-- =============================================
 -- 기존 DB 마이그레이션
 -- =============================================
 -- create table if not exists 는 이미 있는 테이블을 고치지 않으므로,
@@ -321,7 +351,7 @@ alter table assessments add column if not exists copied_from uuid references ass
 -- (실제 차단은 아래 RLS 정책이 한다. 이 grant 는 문지기가 아니라 문이다)
 do $$
 begin
-  grant all on badge_shares, assessment_shares to anon, authenticated, service_role;
+  grant all on badge_shares, assessment_shares, teacher_ai_keys to anon, authenticated, service_role;
 exception
   when undefined_object then
     raise notice 'anon/authenticated 역할이 없어 권한 부여를 건너뜁니다';
@@ -351,6 +381,7 @@ alter table messages enable row level security;
 alter table class_teachers enable row level security;
 alter table badge_shares enable row level security;
 alter table assessment_shares enable row level security;
+alter table teacher_ai_keys enable row level security;
 
 -- 이 파일은 여러 번 실행해도 안전해야 한다.
 -- create policy 는 if not exists 를 지원하지 않으므로 기존 정책을 먼저 지운다.
@@ -842,6 +873,14 @@ create policy "class_teachers_update" on class_teachers for update using (
   is_admin() or is_class_owner(class_id)
 );
 
+-- teacher_ai_keys: 교사는 «자기» 키만 읽고 쓰고 지운다.
+-- 관리자도 남의 키를 보지 못한다 — 이건 개인 비용이 걸린 자격증명이라
+-- 학생 기록과 달리 관리자 예외를 두지 않는다. 실제 복호화는 service_role
+-- 로 도는 전용 라우트만 하고, 이 정책은 그 밖의 모든 경로를 막는 이중 방어다.
+create policy "teacher_ai_keys_owner" on teacher_ai_keys for all
+  using (auth.uid() = teacher_id and is_teacher())
+  with check (auth.uid() = teacher_id and is_teacher());
+
 -- invite_codes: 교사 관리
 -- 학생용 코드는 담당 교사가, 교사용 코드는 관리자만 발급한다.
 -- 교사용 코드가 유출되면 외부인이 교사가 되어 학생 명단에 접근하므로 더 조인다.
@@ -1002,6 +1041,10 @@ create trigger observations_updated_at before update on observations
 
 drop trigger if exists drafts_updated_at on student_record_drafts;
 create trigger drafts_updated_at before update on student_record_drafts
+  for each row execute function update_updated_at();
+
+drop trigger if exists teacher_ai_keys_updated_at on teacher_ai_keys;
+create trigger teacher_ai_keys_updated_at before update on teacher_ai_keys
   for each row execute function update_updated_at();
 
 -- =============================================

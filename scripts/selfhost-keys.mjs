@@ -103,6 +103,7 @@ if (process.argv.includes('--selftest')) selftest()
 const { jwtSecret, anonKey, serviceKey } = makeKeys()
 const pgPassword = alnum(32)
 const authPassword = alnum(32)
+const aiKeySecret = alnum(48)
 const host = process.env.EDUFORM_HOST || '<서버IP>'
 
 console.log(`
@@ -121,6 +122,7 @@ SUPABASE_SERVICE_ROLE_KEY=${serviceKey}
 SUPABASE_JWT_SECRET=${jwtSecret}
 AUTH_DB_URL=postgresql://postgres:${pgPassword}@127.0.0.1:5432/postgres
 POSTGREST_URL=http://127.0.0.1:3001
+AI_KEY_SECRET=${aiKeySecret}
 
 ================================================================
   3) C:\\srv\\postgrest\\postgrest.conf   (데이터 API)
