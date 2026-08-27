@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 import { Sparkles, Search, Save, CheckCircle, FileText } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import type { Profile, Class, StudentRecordDraft } from '@/lib/types'
+import { fetchMyClasses, fetchMyStudents } from '@/lib/my-classes'
 
 export default function RecordsPage() {
   const supabase = createClient()
@@ -31,13 +32,14 @@ export default function RecordsPage() {
   const fetchData = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const [{ data: studs }, { data: cls }, { data: drf }] = await Promise.all([
-      supabase.from('profiles').select('*').eq('teacher_id', user.id).eq('role', 'student').order('name'),
-      supabase.from('classes').select('*').eq('teacher_id', user.id),
+    // 반·학생은 «담당» 기준(class_teachers)으로 읽는다. 자세한 이유는 lib/my-classes.ts
+    const [studs, cls, { data: drf }] = await Promise.all([
+      fetchMyStudents(supabase, user.id),
+      fetchMyClasses(supabase, user.id),
       supabase.from('student_record_drafts').select('*').eq('teacher_id', user.id).order('generated_at', { ascending: false }),
     ])
-    setStudents(studs ?? [])
-    setClasses(cls ?? [])
+    setStudents(studs)
+    setClasses(cls)
     setDrafts(drf ?? [])
     setLoading(false)
   }, [supabase])

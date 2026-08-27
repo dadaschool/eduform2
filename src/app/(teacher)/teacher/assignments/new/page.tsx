@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { ChevronLeft } from 'lucide-react'
 import Link from 'next/link'
 import type { Class } from '@/lib/types'
+import { fetchMyClasses } from '@/lib/my-classes'
 
 export default function NewAssignmentPage() {
   const router = useRouter()
@@ -27,8 +28,7 @@ export default function NewAssignmentPage() {
   const fetchClasses = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { data } = await supabase.from('classes').select('*').eq('teacher_id', user.id)
-    setClasses(data ?? [])
+    setClasses(await fetchMyClasses(supabase, user.id))
   }, [supabase])
 
   useEffect(() => { fetchClasses() }, [fetchClasses])

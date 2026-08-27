@@ -13,6 +13,7 @@ import { Plus, Search, Trash2, ClipboardList, Users, Share2, Globe, Download } f
 import ShareDialog from '@/components/ShareDialog'
 import { formatDate } from '@/lib/utils'
 import type { Assessment, Class } from '@/lib/types'
+import { fetchMyClasses } from '@/lib/my-classes'
 
 interface AssessmentWithStats extends Assessment {
   itemCount: number
@@ -40,11 +41,13 @@ export default function AssessmentsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const [{ data: asmts }, { data: cls }] = await Promise.all([
+    // 반은 «담당» 기준으로 읽는다. classes.teacher_id 는 만든 사람이라
+    // 관리자가 만든 반을 담당하는 교사에게는 목록이 통째로 비어 보였다.
+    const [{ data: asmts }, cls] = await Promise.all([
       supabase.from('assessments').select('*').eq('teacher_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('classes').select('*').eq('teacher_id', user.id),
+      fetchMyClasses(supabase, user.id),
     ])
-    setClasses(cls ?? [])
+    setClasses(cls)
 
     // 공유 상태는 평가 전체를 한 번에 읽는다. 평가마다 따로 읽으면
     // 목록이 눈에 띄게 느려진다 (평가 수만큼 왕복이 늘어난다).
@@ -72,7 +75,7 @@ export default function AssessmentsPage() {
                 .then(r => (r.data ?? []).map(i => i.id))
             ),
         ])
-        const classNames = (ac ?? []).map(r => cls?.find(c => c.id === r.class_id)?.name ?? '').filter(Boolean)
+        const classNames = (ac ?? []).map(r => cls.find(c => c.id === r.class_id)?.name ?? '').filter(Boolean)
         return {
           ...a, itemCount: count ?? 0, classNames, hasChecks: (checkCount ?? 0) > 0,
           shareAll: shareMap[a.id]?.all ?? false,

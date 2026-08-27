@@ -72,8 +72,12 @@ create table if not exists student_badges (
   badge_id uuid not null references badges(id) on delete cascade,
   awarded_by uuid not null references auth.users(id) on delete cascade,
   note text,
-  awarded_at timestamptz default now(),
-  unique(student_id, badge_id)
+  awarded_at timestamptz default now()
+  -- unique(student_id, badge_id) 를 두지 않는다.
+  -- 같은 배지를 한 학생에게 여러 번 줄 수 있어야 한다 (독서왕 ×3).
+  -- 화면에는 «한 번 더 수여(+)» 와 «1개 회수» 가 처음부터 있었는데,
+  -- 이 제약이 두 번째 수여를 중복키 오류로 튕겨 내서 기능이 죽어 있었다.
+  -- 개수는 행의 수로 센다.
 );
 
 -- =============================================
@@ -322,6 +326,9 @@ exception
   when undefined_object then
     raise notice 'anon/authenticated 역할이 없어 권한 부여를 건너뜁니다';
 end $$;
+
+-- 같은 배지를 여러 번 줄 수 있게 제약을 뗀다 (위 student_badges 주석 참고).
+alter table student_badges drop constraint if exists student_badges_student_id_badge_id_key;
 
 -- =============================================
 -- RLS 정책
@@ -900,8 +907,12 @@ create policy "student_badges_student_select" on student_badges for select using
 create policy "assessments_teacher" on assessments for all using (
   auth.uid() = teacher_id and is_teacher()
 );
+-- 배포는 «내 평가» 를 «내가 담당하는 반» 에만. 두 조건이 다 있어야 한다.
+-- 평가 소유만 보면, 교사가 자기 평가를 학교의 아무 반에나 붙일 수 있다.
+-- 학생 기록이 새지는 않지만(profiles 정책이 막는다) 남의 반 목록이
+-- 내 평가에 달라붙어 «학생 0명인 반» 이 보이게 된다.
 create policy "assessment_classes_teacher" on assessment_classes for all using (
-  exists (select 1 from assessments a where a.id = assessment_id and a.teacher_id = auth.uid())
+  is_my_assessment(assessment_id) and is_my_class(class_id)
 );
 create policy "assessment_items_teacher" on assessment_items for all using (
   exists (select 1 from assessments a where a.id = assessment_id and a.teacher_id = auth.uid())
@@ -918,8 +929,9 @@ create policy "student_assessment_checks_student_select" on student_assessment_c
 create policy "assignments_teacher" on assignments for all using (
   auth.uid() = teacher_id and is_teacher()
 );
+-- 과제도 같다 — 내 과제를 내가 담당하는 반에만 배포한다.
 create policy "assignment_classes_teacher" on assignment_classes for all using (
-  is_my_assignment(assignment_id)
+  is_my_assignment(assignment_id) and is_my_class(class_id)
 );
 -- 원래 조건은 (p.class_id = class_id) 였는데, 규칙 없는 class_id 가
 -- 서브쿼리 안쪽의 p.class_id 로 해석되어 항상 참이 되었다.

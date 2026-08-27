@@ -47,8 +47,10 @@ export default function AssignmentDetailPage() {
     setClasses(cls ?? [])
     if (cls && cls.length > 0) setSelectedClass(cls[0].id)
 
+    // 범위는 «과제가 배포된 반» 이 정한다. 담임 관계로 좁히면 교과 담당
+    // 교사에게 학생이 한 명도 안 나온다. 그 밖은 RLS 가 막는다.
     const { data: studs } = await supabase.from('profiles').select('*')
-      .eq('teacher_id', user.id).eq('role', 'student')
+      .eq('role', 'student')
       .in('class_id', classIds.length > 0 ? classIds : ['none'])
       .order('student_number').order('name')
 

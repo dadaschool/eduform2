@@ -13,6 +13,7 @@ import { toast } from 'sonner'
 import { Plus, Trash2, Reply, Search, Inbox, Send, X } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import type { Profile, Class } from '@/lib/types'
+import { fetchMyClasses, fetchMyStudents } from '@/lib/my-classes'
 
 interface Message {
   id: string
@@ -76,12 +77,12 @@ function TeacherMessagesInner() {
       if (!user) return
       setMe(user.id)
 
-      const [{ data: studs }, { data: cls }] = await Promise.all([
-        supabase.from('profiles').select('*').eq('teacher_id', user.id).eq('role', 'student').order('name'),
-        supabase.from('classes').select('*').eq('teacher_id', user.id).order('name'),
+      const [studs, cls] = await Promise.all([
+        fetchMyStudents(supabase, user.id),
+        fetchMyClasses(supabase, user.id),
       ])
-      setStudents(studs ?? [])
-      setClasses(cls ?? [])
+      setStudents(studs)
+      setClasses(cls)
       await fetchData(user.id)
       setLoading(false)
 

@@ -128,8 +128,11 @@ export default function CheckPage() {
     const { data: cls } = await supabase.from('classes').select('*').in('id', classIds.length > 0 ? classIds : ['none'])
     setClasses(cls ?? [])
 
+    // profiles.teacher_id 로 좁히면 안 된다 — 그것은 담임 한 명을 가리켜서
+    // 교과 담당 교사에게는 학생이 한 명도 나오지 않았다.
+    // 범위는 «평가가 배포된 반» 이 정하고, 그 밖은 RLS 가 막는다.
     const { data: studs } = await supabase.from('profiles').select('*')
-      .eq('teacher_id', user.id).eq('role', 'student')
+      .eq('role', 'student')
       .in('class_id', classIds.length > 0 ? classIds : ['none'])
       .order('class_id').order('student_number')
     setStudents(studs ?? [])

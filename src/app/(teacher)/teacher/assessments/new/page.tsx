@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { Plus, Trash2, GripVertical, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
 import { CHECK_TYPE_OPTIONS, type CheckType } from '@/lib/types'
 import type { Class } from '@/lib/types'
+import { fetchMyClasses } from '@/lib/my-classes'
 
 interface ItemDraft {
   id: string
@@ -41,8 +42,7 @@ export default function NewAssessmentPage() {
   const fetchClasses = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const { data } = await supabase.from('classes').select('*').eq('teacher_id', user.id)
-    setClasses(data ?? [])
+    setClasses(await fetchMyClasses(supabase, user.id))
   }, [supabase])
 
   useEffect(() => { fetchClasses() }, [fetchClasses])
