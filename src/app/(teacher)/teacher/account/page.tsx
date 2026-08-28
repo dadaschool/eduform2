@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
 import { KeyRound, User, ShieldCheck } from 'lucide-react'
+import AiKeysCard from '@/components/teacher/AiKeysCard'
 
 /**
  * 내 계정 — 이름과 비밀번호를 스스로 바꾼다.
@@ -143,6 +144,8 @@ export default function TeacherAccountPage() {
           </form>
         </CardContent>
       </Card>
+
+      <AiKeysCard />
 
       <Card>
         <CardHeader className="pb-3">

@@ -125,16 +125,25 @@ assignment_submissions, observations, student_record_drafts, messages`
 | Project API keys → `anon` `public` | `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
 | Project API keys → `service_role` | `SUPABASE_SERVICE_ROLE_KEY` |
 
-AI 기능용 키는 아래에서 받습니다. **둘 다 없어도 나머지 기능은 전부 동작합니다.**
+AI 기능(평가 항목 추천 · 생활기록부 초안)은 **교사마다 자기 API 키**로 씁니다.
+교사가 로그인 후 **내 계정 → AI API 키**에서 업스테이지 / Gemini / OpenAI 중
+1개 이상을 등록하고, 등록 순서대로 시도하다 오류가 나면 다음 키로 넘어갑니다.
+**키가 없어도 나머지 기능은 전부 동작합니다.**
+
+서버에 넣을 환경변수는 하나뿐입니다.
+
+| 환경변수 | 값 |
+|---|---|
+| `AI_KEY_SECRET` | 교사 키를 DB 에 암호화 저장할 때 쓰는 32자 이상 임의 문자열 |
+
+아래 세 칸은 **관리자 계정 전용** 학교 공용 폴백입니다(선택). 관리자가 자기 키를
+등록하지 않아도 점검용으로 쓸 수 있게만 열어 둡니다. 일반 교사에게는 적용되지 않습니다.
 
 | 발급처 | 넣을 환경변수 이름 |
 |---|---|
-| https://aistudio.google.com/app/apikey → Create API key | `GEMINI_API_KEY` |
 | https://console.upstage.ai → API Keys | `UPSTAGE_API_KEY` |
-
-AI 기능은 **Gemini 를 먼저 쓰고 실패하면 업스테이지(Solar)로 자동 전환**됩니다.
-둘 중 하나만 있어도 동작합니다. Gemini 가 막혀 있다면 `AI_PRIMARY=upstage` 를 함께
-등록해 Gemini 호출을 건너뛰게 하세요.
+| https://aistudio.google.com/app/apikey → Create API key | `GEMINI_API_KEY` |
+| https://platform.openai.com/api-keys | `OPENAI_API_KEY` |
 
 > `service_role` 키는 보안 규칙(RLS)을 무시하는 관리자 키입니다. **깃, 채팅, 문서에 절대 붙여넣지 마세요.** 서버에서만 쓰이고 브라우저로는 나가지 않습니다.
 
@@ -182,9 +191,10 @@ values (
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
-GEMINI_API_KEY
-UPSTAGE_API_KEY
-AI_PRIMARY
+AI_KEY_SECRET
+GEMINI_API_KEY      (선택 · 관리자 폴백)
+UPSTAGE_API_KEY     (선택 · 관리자 폴백)
+OPENAI_API_KEY      (선택 · 관리자 폴백)
 ```
 
 4. **Deployments** 탭 → 맨 위 배포의 `⋯` → **Redeploy**
@@ -278,12 +288,12 @@ gemini-2.5-flash       403  PERMISSION_DENIED: Your project has been denied acce
 교육청·회사 등 조직 Google 계정으로 발급한 키는 관리자 정책에 막히는 경우가 많습니다.
 해결 방법은 둘 중 하나입니다.
 
-1. **업스테이지만 쓴다** — `UPSTAGE_API_KEY` 를 등록하고 `AI_PRIMARY=upstage` 로 둡니다.
-   Gemini 호출을 건너뛰어 응답이 약 0.7초 빨라집니다. (현재 이 설정을 쓰고 있습니다)
+1. **업스테이지나 OpenAI 키를 대신 등록한다** — 내 계정 → AI API 키에서 등록하고,
+   순서를 그 키가 위로 오게 올려 둡니다. Gemini 는 건너뜁니다.
 2. **개인 Google 계정으로 Gemini 키 재발급** — https://aistudio.google.com/app/apikey
 
-어느 쪽도 없으면 영향 범위는 **버튼 2개뿐**입니다 — 평가 만들기의 AI 항목 추천,
-생활기록부의 초안 생성. 화면은 정상 동작하고 나머지 기능은 전부 됩니다.
+키를 하나도 등록하지 않으면 영향 범위는 **버튼 2개뿐**입니다 — 평가 만들기의 AI 항목
+추천, 생활기록부의 초안 생성. 화면은 정상 동작하고 나머지 기능은 전부 됩니다.
 
 **쪽지 실시간 알림이 안 온다**
 Supabase **Database → Replication** 에서 `messages` 테이블이 켜져 있는지 확인하세요.

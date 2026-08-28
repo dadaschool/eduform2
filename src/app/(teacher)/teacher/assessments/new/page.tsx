@@ -15,6 +15,9 @@ import { Plus, Trash2, GripVertical, Sparkles, ChevronDown, ChevronUp } from 'lu
 import { CHECK_TYPE_OPTIONS, type CheckType } from '@/lib/types'
 import type { Class } from '@/lib/types'
 import { fetchMyClasses } from '@/lib/my-classes'
+import { notifyAiError } from '@/lib/ai-error'
+
+const AI_LABEL = { upstage: '업스테이지 Solar', gemini: 'Google Gemini', openai: 'OpenAI ChatGPT' } as const
 
 interface ItemDraft {
   id: string
@@ -94,11 +97,11 @@ export default function NewAssessmentPage() {
         }))
         setItems(prev => [...prev, ...newItems])
         toast.success(`AI가 ${newItems.length}개의 평가 항목을 생성했습니다.`, {
-          description: data.provider === 'upstage' ? '업스테이지 Solar' : 'Google Gemini',
+          description: AI_LABEL[data.provider as keyof typeof AI_LABEL] ?? data.provider,
         })
       }
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'AI 생성 실패')
+      notifyAiError(err)
     } finally {
       setAiLoading(false)
     }

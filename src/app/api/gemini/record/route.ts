@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateText } from '@/lib/ai'
+import { generateForUser } from '@/lib/ai-keys'
+import { NO_AI_KEYS } from '@/lib/ai'
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '인증 필요' }, { status: 401 })
+
+    const { data: me } = await supabase.from('profiles').select('is_admin').eq('id', user.id).maybeSingle()
 
     const { studentId, subject } = await req.json()
 
@@ -74,10 +77,17 @@ ${observationsText || '(데이터 없음)'}
 
 위 자료를 바탕으로 학생부 세특 초안을 작성해 주세요. 교사가 검토·수정할 수 있는 초안 형태로 작성하고, 세특 문장만 출력하세요.`
 
-    const { text: draft, provider } = await generateText({ user: prompt })
+    const { text: draft, provider } = await generateForUser(
+      { userId: user.id, isAdmin: me?.is_admin === true },
+      { user: prompt }
+    )
 
     return NextResponse.json({ draft, provider })
   } catch (err: unknown) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : 'AI 생성 실패' }, { status: 500 })
+    const msg = err instanceof Error ? err.message : 'AI 생성 실패'
+    if (msg === NO_AI_KEYS) {
+      return NextResponse.json({ error: NO_AI_KEYS }, { status: 400 })
+    }
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

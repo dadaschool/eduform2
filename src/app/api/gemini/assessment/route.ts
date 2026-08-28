@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateText } from '@/lib/ai'
+import { generateForUser } from '@/lib/ai-keys'
+import { NO_AI_KEYS } from '@/lib/ai'
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: '인증 필요' }, { status: 401 })
+
+    const { data: profile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).maybeSingle()
 
     const { prompt, subject, title } = await req.json()
 
@@ -29,10 +32,13 @@ export async function POST(req: Request) {
 반드시 JSON만 응답하세요. 코드블록 없이 순수 JSON 배열만:
 [{"name":"...","description":"...","check_type":"...","number_min":0,"number_max":100}]`
 
-    const { text, provider } = await generateText({
-      system: systemPrompt,
-      user: `교과: ${subject || '미지정'}\n평가명: ${title || '미지정'}\n\n교사 요청: ${prompt}`,
-    })
+    const { text, provider } = await generateForUser(
+      { userId: user.id, isAdmin: profile?.is_admin === true },
+      {
+        system: systemPrompt,
+        user: `교과: ${subject || '미지정'}\n평가명: ${title || '미지정'}\n\n교사 요청: ${prompt}`,
+      }
+    )
 
     // JSON 파싱
     let items
@@ -47,6 +53,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ items, provider })
   } catch (err: unknown) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : 'AI 생성 실패' }, { status: 500 })
+    const msg = err instanceof Error ? err.message : 'AI 생성 실패'
+    if (msg === NO_AI_KEYS) {
+      return NextResponse.json({ error: NO_AI_KEYS }, { status: 400 })
+    }
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

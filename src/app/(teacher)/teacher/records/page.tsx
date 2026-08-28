@@ -14,6 +14,9 @@ import { Sparkles, Search, Save, CheckCircle, FileText } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import type { Profile, Class, StudentRecordDraft } from '@/lib/types'
 import { fetchMyClasses, fetchMyStudents } from '@/lib/my-classes'
+import { notifyAiError } from '@/lib/ai-error'
+
+const AI_LABEL = { upstage: '업스테이지 Solar', gemini: 'Google Gemini', openai: 'OpenAI ChatGPT' } as const
 
 export default function RecordsPage() {
   const supabase = createClient()
@@ -59,10 +62,10 @@ export default function RecordsPage() {
       if (!res.ok) throw new Error(data.error)
       setEditedDraft(data.draft)
       toast.success('학생부 초안이 생성되었습니다.', {
-        description: data.provider === 'upstage' ? '업스테이지 Solar' : 'Google Gemini',
+        description: AI_LABEL[data.provider as keyof typeof AI_LABEL] ?? data.provider,
       })
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : '생성 실패')
+      notifyAiError(err)
     } finally {
       setGenerating(false)
     }
