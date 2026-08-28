@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { Plus, Trash2, Edit2, Eye, Search } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import type { Observation, Profile, Class } from '@/lib/types'
+import { fetchMyClasses, fetchMyStudents } from '@/lib/my-classes'
 
 interface ObsWithStudent extends Observation {
   student: Profile
@@ -40,13 +41,14 @@ export default function ObservationsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const [{ data: obs }, { data: studs }, { data: cls }] = await Promise.all([
+    // 반·학생은 «담당» 기준(class_teachers)으로 읽는다. 자세한 이유는 lib/my-classes.ts
+    const [{ data: obs }, studs, cls] = await Promise.all([
       supabase.from('observations').select('*, profiles(*)').eq('teacher_id', user.id).order('observed_at', { ascending: false }),
-      supabase.from('profiles').select('*').eq('teacher_id', user.id).eq('role', 'student').order('student_number'),
-      supabase.from('classes').select('*').eq('teacher_id', user.id).order('name'),
+      fetchMyStudents(supabase, user.id),
+      fetchMyClasses(supabase, user.id),
     ])
-    setStudents(studs ?? [])
-    setClasses(cls ?? [])
+    setStudents(studs)
+    setClasses(cls)
     const mapped = (obs ?? []).map(o => ({ ...o, student: o.profiles as unknown as Profile }))
     setObservations(mapped)
 

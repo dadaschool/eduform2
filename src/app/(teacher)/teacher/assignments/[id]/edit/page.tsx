@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { ChevronLeft } from 'lucide-react'
 import Link from 'next/link'
 import type { Class } from '@/lib/types'
+import { fetchMyClasses } from '@/lib/my-classes'
 
 export default function EditAssignmentPage() {
   const params = useParams()
@@ -31,13 +32,13 @@ export default function EditAssignmentPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const [{ data: asng }, { data: cls }, { data: ac }] = await Promise.all([
+    const [{ data: asng }, cls, { data: ac }] = await Promise.all([
       supabase.from('assignments').select('*').eq('id', id).single(),
-      supabase.from('classes').select('*').eq('teacher_id', user.id),
+      fetchMyClasses(supabase, user.id),
       supabase.from('assignment_classes').select('class_id').eq('assignment_id', id),
     ])
 
-    setClasses(cls ?? [])
+    setClasses(cls)
     if (asng) {
       setTitle(asng.title ?? '')
       setSubject((asng as unknown as { subject?: string }).subject ?? '')

@@ -12,6 +12,7 @@ import { Plus, Search, Trash2, BookOpen, Clock, Pencil } from 'lucide-react'
 import { formatDate, formatDateTime, getSubmissionStatus, SUBMISSION_STATUS_LABELS, SUBMISSION_STATUS_COLORS } from '@/lib/utils'
 import type { Assignment, Class, Profile, AssignmentSubmission } from '@/lib/types'
 import { parseISO, isPast } from 'date-fns'
+import { fetchMyClasses } from '@/lib/my-classes'
 
 interface AssignmentCol extends Assignment {
   isOverdue: boolean
@@ -33,11 +34,12 @@ export default function AssignmentsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const [{ data: asgns }, { data: cls }] = await Promise.all([
+    // 반·학생은 «담당» 기준(class_teachers)으로 읽는다. 자세한 이유는 lib/my-classes.ts
+    const [{ data: asgns }, cls] = await Promise.all([
       supabase.from('assignments').select('*').eq('teacher_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('classes').select('*').eq('teacher_id', user.id).order('name'),
+      fetchMyClasses(supabase, user.id),
     ])
-    setClasses(cls ?? [])
+    setClasses(cls)
 
     const cols: AssignmentCol[] = (asgns ?? []).map(a => ({
       ...a,
@@ -62,7 +64,6 @@ export default function AssignmentsPage() {
       const { data: studs } = await supabase
         .from('profiles')
         .select('*')
-        .eq('teacher_id', user.id)
         .eq('role', 'student')
         .eq('class_id', selectedClass)
         .order('student_number')

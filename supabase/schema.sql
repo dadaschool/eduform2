@@ -72,8 +72,12 @@ create table if not exists student_badges (
   badge_id uuid not null references badges(id) on delete cascade,
   awarded_by uuid not null references auth.users(id) on delete cascade,
   note text,
-  awarded_at timestamptz default now(),
-  unique(student_id, badge_id)
+  awarded_at timestamptz default now()
+  -- unique(student_id, badge_id) 를 두지 않는다.
+  -- 같은 배지를 한 학생에게 여러 번 줄 수 있어야 한다 (독서왕 ×3).
+  -- 화면에는 «한 번 더 수여(+)» 와 «1개 회수» 가 처음부터 있었는데,
+  -- 이 제약이 두 번째 수여를 중복키 오류로 튕겨 내서 기능이 죽어 있었다.
+  -- 개수는 행의 수로 센다.
 );
 
 -- =============================================
@@ -230,6 +234,43 @@ create table if not exists class_teachers (
 );
 
 -- =============================================
+-- 배지·평가 공유 (Shares)
+-- =============================================
+-- 만든 교사가 다른 교사에게 «보여 준다». 받은 교사는 그것을 자기 것으로
+-- «복사해서» 쓴다 — 원본을 같이 쓰게 하지 않는다.
+--
+-- 왜 복사인가. student_badges.badge_id 와 assessment_items.assessment_id 는
+-- on delete cascade 다. 원본을 함께 썼다면 만든 교사가 배지 하나를 지우는
+-- 순간 그것을 쓴 «다른 반 학생들의 수여 기록» 과 채점 결과까지 사라진다.
+-- 남의 실수로 내 기록이 날아가면 안 된다. 그래서 가져오는 순간 내 사본이 된다.
+--
+-- shared_with 가 null 이면 «교사 전체 공유» 다.
+create table if not exists badge_shares (
+  id uuid primary key default uuid_generate_v4(),
+  badge_id uuid not null references badges(id) on delete cascade,
+  shared_with uuid references auth.users(id) on delete cascade,
+  created_at timestamptz default now()
+);
+-- unique(badge_id, shared_with) 로는 «전체 공유» 중복을 막지 못한다.
+-- SQL 에서 null 은 서로 다른 값으로 취급되어 같은 행이 몇 개든 들어간다.
+-- 그래서 두 경우를 나눠 부분 유일 인덱스로 막는다.
+create unique index if not exists badge_shares_one_per_teacher
+  on badge_shares (badge_id, shared_with) where shared_with is not null;
+create unique index if not exists badge_shares_one_for_all
+  on badge_shares (badge_id) where shared_with is null;
+
+create table if not exists assessment_shares (
+  id uuid primary key default uuid_generate_v4(),
+  assessment_id uuid not null references assessments(id) on delete cascade,
+  shared_with uuid references auth.users(id) on delete cascade,
+  created_at timestamptz default now()
+);
+create unique index if not exists assessment_shares_one_per_teacher
+  on assessment_shares (assessment_id, shared_with) where shared_with is not null;
+create unique index if not exists assessment_shares_one_for_all
+  on assessment_shares (assessment_id) where shared_with is null;
+
+-- =============================================
 -- 기존 DB 마이그레이션
 -- =============================================
 -- create table if not exists 는 이미 있는 테이블을 고치지 않으므로,
@@ -266,6 +307,29 @@ insert into class_teachers (class_id, teacher_id, role)
 select id, teacher_id, 'homeroom' from classes
 on conflict (class_id, teacher_id) do nothing;
 
+-- 공유받아 가져온 사본이 «어디서 왔는지» 기록한다.
+-- 화면에서 "○○ 선생님에게서 가져옴" 을 보여주고, 같은 것을 두 번 가져오지
+-- 않게 막는 데 쓴다. on delete set null 인 것이 중요하다 — 원본이 지워져도
+-- 내 사본은 남아야 한다. 그게 복사로 만든 이유다.
+alter table badges add column if not exists copied_from uuid references badges(id) on delete set null;
+alter table assessments add column if not exists copied_from uuid references assessments(id) on delete set null;
+
+-- 새 표의 권한은 기본 설정에 맡기지 않고 못박는다.
+-- alter default privileges 는 «그것을 건 역할이 만든» 표에만 걸린다.
+-- 스키마를 다른 역할로 적용하면 표는 생기는데 권한이 없어,
+-- 화면에서 «permission denied for table badge_shares» 만 보게 된다.
+-- (실제 차단은 아래 RLS 정책이 한다. 이 grant 는 문지기가 아니라 문이다)
+do $$
+begin
+  grant all on badge_shares, assessment_shares to anon, authenticated, service_role;
+exception
+  when undefined_object then
+    raise notice 'anon/authenticated 역할이 없어 권한 부여를 건너뜁니다';
+end $$;
+
+-- 같은 배지를 여러 번 줄 수 있게 제약을 뗀다 (위 student_badges 주석 참고).
+alter table student_badges drop constraint if exists student_badges_student_id_badge_id_key;
+
 -- =============================================
 -- RLS 정책
 -- =============================================
@@ -285,6 +349,8 @@ alter table observations enable row level security;
 alter table student_record_drafts enable row level security;
 alter table messages enable row level security;
 alter table class_teachers enable row level security;
+alter table badge_shares enable row level security;
+alter table assessment_shares enable row level security;
 
 -- 이 파일은 여러 번 실행해도 안전해야 한다.
 -- create policy 는 if not exists 를 지원하지 않으므로 기존 정책을 먼저 지운다.
@@ -471,6 +537,39 @@ as $$
   )
 $$;
 
+-- 이 배지·평가가 내 것인가. 공유 정책 안에서 badges 를 다시 조회하면
+-- 그 조회에도 badges 정책이 걸려 서로를 물 수 있다. 여기서 고리를 끊는다.
+create or replace function is_my_badge(p_badge_id uuid)
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from badges where id = p_badge_id and teacher_id = auth.uid())
+$$;
+
+create or replace function is_my_assessment(p_assessment_id uuid)
+returns boolean language sql security definer stable set search_path = public as $$
+  select exists (select 1 from assessments where id = p_assessment_id and teacher_id = auth.uid())
+$$;
+
+-- 이 배지·평가가 나에게 공유되었는가.
+-- shared_with is null 은 «교사 전체 공유» 다. 학생에게는 열리지 않도록
+-- is_teacher() 를 함께 본다 — «전체 공유» 가 «학생 전체» 가 되면 안 된다.
+create or replace function is_shared_badge(p_badge_id uuid)
+returns boolean language sql security definer stable set search_path = public as $$
+  select is_teacher() and exists (
+    select 1 from badge_shares s
+    where s.badge_id = p_badge_id
+      and (s.shared_with is null or s.shared_with = auth.uid())
+  )
+$$;
+
+create or replace function is_shared_assessment(p_assessment_id uuid)
+returns boolean language sql security definer stable set search_path = public as $$
+  select is_teacher() and exists (
+    select 1 from assessment_shares s
+    where s.assessment_id = p_assessment_id
+      and (s.shared_with is null or s.shared_with = auth.uid())
+  )
+$$;
+
 -- 이 교사가 내(학생) 반을 담당하는가.
 -- 학생 화면에서 담당 교사 이름을 표시하고 쪽지 상대를 고를 때 쓴다.
 -- 예전에는 담임(profiles.teacher_id) 한 명만 볼 수 있어서, 교과 교사가
@@ -648,6 +747,10 @@ create policy "profiles_select" on profiles for select using (
   -- 학생이 쪽지 발신자(선생님) 이름을 표시할 수 있어야 한다
   or id = current_user_teacher_id()
   or is_my_class_teacher(id)                -- 내 반을 담당하는 교사 전원
+  -- 교사끼리는 서로 보인다. 배지·평가를 «누구에게» 공유할지 골라야 하고,
+  -- 받은 자료가 «누구에게서» 왔는지 이름을 보이려면 필요하다.
+  -- 학생 기록은 여기로 열리지 않는다 — 이 조건은 role = 'teacher' 인 행만 통과시킨다.
+  or (role = 'teacher' and is_teacher())
   or is_admin()                             -- 관리자는 계정 관리를 위해 전체 조회
 );
 
@@ -751,6 +854,38 @@ create policy "invite_codes_manage" on invite_codes for all using (
 -- 학생용 조회 정책을 두지 않는다. 코드 확인은 verify_invite_code() 로만 한다.
 -- is_active = true 조건으로 열어두면 활성 코드 전체가 열거된다.
 
+-- ---------------------------------------------
+-- 공유 (badge_shares / assessment_shares)
+-- ---------------------------------------------
+-- 공유받은 배지·평가는 «읽기만» 된다. 고치거나 지우는 것은 만든 교사뿐이다.
+-- 받은 교사는 화면의 «내 것으로 가져오기» 로 사본을 만들어 그것을 고친다.
+create policy "badges_shared_select" on badges for select using ( is_shared_badge(id) );
+create policy "assessments_shared_select" on assessments for select using ( is_shared_assessment(id) );
+
+-- 항목까지 보여야 «가져오기» 가 평가를 그대로 복사할 수 있다.
+-- 반 배포(assessment_classes)와 채점 결과(student_assessment_checks)는 열지 않는다.
+-- 어느 반에 냈고 어느 학생이 몇 점인지는 공유할 대상이 아니다.
+create policy "assessment_items_shared_select" on assessment_items for select using (
+  is_shared_assessment(assessment_id)
+);
+
+-- 공유를 걸고 푸는 것은 만든 교사만.
+create policy "badge_shares_owner" on badge_shares for all using (
+  is_teacher() and is_my_badge(badge_id)
+);
+create policy "assessment_shares_owner" on assessment_shares for all using (
+  is_teacher() and is_my_assessment(assessment_id)
+);
+
+-- 받는 쪽은 «자기에게 온 것» 만 본다. 누가 누구에게 공유했는지가 전부
+-- 보이면 안 된다. 화면이 «전체 공유 / 나에게만» 을 구분하는 데 쓴다.
+create policy "badge_shares_recipient_select" on badge_shares for select using (
+  is_teacher() and (shared_with is null or shared_with = auth.uid())
+);
+create policy "assessment_shares_recipient_select" on assessment_shares for select using (
+  is_teacher() and (shared_with is null or shared_with = auth.uid())
+);
+
 -- badges
 create policy "badges_teacher" on badges for all using (
   auth.uid() = teacher_id and is_teacher()
@@ -772,8 +907,12 @@ create policy "student_badges_student_select" on student_badges for select using
 create policy "assessments_teacher" on assessments for all using (
   auth.uid() = teacher_id and is_teacher()
 );
+-- 배포는 «내 평가» 를 «내가 담당하는 반» 에만. 두 조건이 다 있어야 한다.
+-- 평가 소유만 보면, 교사가 자기 평가를 학교의 아무 반에나 붙일 수 있다.
+-- 학생 기록이 새지는 않지만(profiles 정책이 막는다) 남의 반 목록이
+-- 내 평가에 달라붙어 «학생 0명인 반» 이 보이게 된다.
 create policy "assessment_classes_teacher" on assessment_classes for all using (
-  exists (select 1 from assessments a where a.id = assessment_id and a.teacher_id = auth.uid())
+  is_my_assessment(assessment_id) and is_my_class(class_id)
 );
 create policy "assessment_items_teacher" on assessment_items for all using (
   exists (select 1 from assessments a where a.id = assessment_id and a.teacher_id = auth.uid())
@@ -790,8 +929,9 @@ create policy "student_assessment_checks_student_select" on student_assessment_c
 create policy "assignments_teacher" on assignments for all using (
   auth.uid() = teacher_id and is_teacher()
 );
+-- 과제도 같다 — 내 과제를 내가 담당하는 반에만 배포한다.
 create policy "assignment_classes_teacher" on assignment_classes for all using (
-  is_my_assignment(assignment_id)
+  is_my_assignment(assignment_id) and is_my_class(class_id)
 );
 -- 원래 조건은 (p.class_id = class_id) 였는데, 규칙 없는 class_id 가
 -- 서브쿼리 안쪽의 p.class_id 로 해석되어 항상 참이 되었다.

@@ -62,6 +62,8 @@ export interface InviteCode {
 export interface Badge {
   id: string
   teacher_id: string
+  /** 공유받아 가져온 사본이면 원본 배지 id. 원본이 지워지면 null 이 된다. */
+  copied_from?: string | null
   name: string
   description: string | null
   icon: string
@@ -82,6 +84,8 @@ export interface StudentBadge {
 export interface Assessment {
   id: string
   teacher_id: string
+  /** 공유받아 가져온 사본이면 원본 평가 id. 원본이 지워지면 null 이 된다. */
+  copied_from?: string | null
   title: string
   subject: string | null
   description: string | null
@@ -160,4 +164,15 @@ export interface StudentRecordDraft {
   generated_at: string
   updated_at: string
   student?: Profile
+}
+
+/**
+ * 배지·평가 공유. shared_with 가 null 이면 «교사 전체 공유» 다.
+ * 받은 교사는 읽기만 하고, 쓰려면 자기 것으로 복사한다 — 원본을 함께 쓰면
+ * 만든 교사가 지우는 순간 남의 수여·채점 기록까지 사라진다.
+ */
+export interface ShareRow {
+  id: string
+  shared_with: string | null
+  created_at: string
 }

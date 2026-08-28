@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { Plus, Trash2, GripVertical } from 'lucide-react'
 import { CHECK_TYPE_OPTIONS, type CheckType } from '@/lib/types'
 import type { Class } from '@/lib/types'
+import { fetchMyClasses } from '@/lib/my-classes'
 
 interface ItemDraft {
   id: string
@@ -44,9 +45,9 @@ export default function EditAssessmentPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const [{ data: asmt }, { data: cls }, { data: asmtItems }, { data: asmtClasses }] = await Promise.all([
+    const [{ data: asmt }, cls, { data: asmtItems }, { data: asmtClasses }] = await Promise.all([
       supabase.from('assessments').select('*').eq('id', id).single(),
-      supabase.from('classes').select('*').eq('teacher_id', user.id),
+      fetchMyClasses(supabase, user.id),
       supabase.from('assessment_items').select('*').eq('assessment_id', id).order('display_order'),
       supabase.from('assessment_classes').select('class_id').eq('assessment_id', id),
     ])
@@ -70,7 +71,7 @@ export default function EditAssessmentPage() {
     setTitle(asmt.title)
     setSubject(asmt.subject ?? '')
     setDescription(asmt.description ?? '')
-    setClasses(cls ?? [])
+    setClasses(cls)
     setSelectedClasses((asmtClasses ?? []).map(r => r.class_id))
     setItems((asmtItems ?? []).map(it => ({
       id: crypto.randomUUID(),

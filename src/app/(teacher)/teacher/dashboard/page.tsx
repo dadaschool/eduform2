@@ -3,11 +3,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Users, BookOpen, ClipboardList, Eye, School } from 'lucide-react'
 import Link from 'next/link'
 import { formatDate } from '@/lib/utils'
+import { fetchMyClassIds } from '@/lib/my-classes'
 
 export default async function TeacherDashboard() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
+
+  // 반·학생은 «담당» 기준(class_teachers)으로 센다. classes.teacher_id 로 세면
+  // 반을 만들지 않은 교사에게는 반 0개 · 학생 0명으로 나온다.
+  const { ids: myClassIds } = await fetchMyClassIds(supabase, user.id)
 
   const [
     { data: classes },
@@ -17,8 +22,13 @@ export default async function TeacherDashboard() {
     { data: recentObs },
     { data: pendingSubs },
   ] = await Promise.all([
-    supabase.from('classes').select('id, name').eq('teacher_id', user.id),
-    supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('teacher_id', user.id).eq('role', 'student'),
+    myClassIds.length
+      ? supabase.from('classes').select('id, name').in('id', myClassIds).order('name')
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    myClassIds.length
+      ? supabase.from('profiles').select('*', { count: 'exact', head: true })
+          .eq('role', 'student').in('class_id', myClassIds)
+      : Promise.resolve({ count: 0 }),
     supabase.from('assessments').select('*', { count: 'exact', head: true }).eq('teacher_id', user.id),
     supabase.from('assignments').select('id, title, deadline').eq('teacher_id', user.id).order('deadline', { ascending: true }).limit(5),
     supabase.from('observations').select('id, content, observed_at, profiles(name)').eq('teacher_id', user.id).order('observed_at', { ascending: false }).limit(5),
