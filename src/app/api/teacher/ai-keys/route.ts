@@ -49,7 +49,11 @@ export async function GET() {
     .order('priority', { ascending: true })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ keys: data ?? [] })
+  // localModel — LMSTUDIO_MODEL 이 서버에 설정돼 있으면 이 교사도 자동으로 쓸 수 있다
+  // (lib/ai-keys.ts 가 개인 키 뒤에 자동으로 붙인다). 실제 연결까지는 확인하지 않는다
+  // — 매 조회마다 LM Studio 에 핑을 보내면 그 서버가 잠깐 꺼져 있을 때도 화면이
+  // 느려지거나 오류로 보인다. 연결 자체는 npm run doctor 가 확인한다.
+  return NextResponse.json({ keys: data ?? [], localModel: process.env.LMSTUDIO_MODEL || null })
 }
 
 export async function PUT(req: Request) {

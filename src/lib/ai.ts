@@ -12,12 +12,12 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
  * 사유를 모아 던진다.
  */
 
-export type AIProvider = 'gemini' | 'upstage' | 'openai'
+export type AIProvider = 'gemini' | 'upstage' | 'openai' | 'lmstudio'
 
 export interface ProviderKey {
   provider: AIProvider
   key: string
-  /** 어디서 온 키인지 — 오류 메시지에만 쓴다 ('교사 등록' | '학교 공용') */
+  /** 어디서 온 키인지 — 오류 메시지에만 쓴다 ('교사 등록' | '학교 공용' | '학교 로컬') */
   source?: string
 }
 
@@ -44,6 +44,20 @@ const OPENAI_MODEL = 'gpt-4o-mini'
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions'
 
 /**
+ * 로컬 큐웬(LM Studio) — 학교 서버 컴퓨터에서 도는 모델.
+ *
+ * ⚠ 클라우드(Vercel 등) 배포에서는 이 provider 를 쓸 수 없다. LM Studio 는
+ *   «이 앱이 돌고 있는 그 컴퓨터» 에서만 열리므로, 앱이 다른 컴퓨터(클라우드)에서
+ *   돌면 주소가 아예 존재하지 않는다. 에듀폼2(교내 서버판)처럼 앱과 LM Studio 가
+ *   같은 윈도우 컴퓨터에서 돌 때만 의미가 있다.
+ *
+ * 키 대신 «모델 이름» 을 받는다 — 로그인이 없는 로컬 서버라 인증할 게 없다.
+ * LM Studio 가 무시하더라도 Authorization 헤더는 형식상 채워 보낸다.
+ */
+const LMSTUDIO_BASE_URL = (process.env.LMSTUDIO_URL || 'http://127.0.0.1:1234/v1').replace(/\/+$/, '')
+const LMSTUDIO_ENDPOINT = `${LMSTUDIO_BASE_URL}/chat/completions`
+
+/**
  * 제공자 한 곳당 제한 시간.
  *
  * 교내망처럼 바깥으로 나가는 통신이 막힌 곳에서는 방화벽이 거절 응답을 주지 않고
@@ -52,6 +66,12 @@ const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions'
  * 여기서 끊어야 "AI 만 안 되고 나머지는 정상" 이 된다.
  */
 const TIMEOUT_MS = 20_000
+
+/**
+ * 로컬 모델은 서버용 GPU 없이 CPU 로 도는 경우가 흔해 클라우드보다 훨씬 느리다.
+ * 20 초로 끊으면 대부분 시간 초과로 실패해 버려서 따로 넉넉하게 둔다.
+ */
+const LMSTUDIO_TIMEOUT_MS = 90_000
 
 async function generateWithGemini({ system, user }: GenerateOptions, key: string): Promise<string> {
   const genAI = new GoogleGenerativeAI(key)
@@ -63,12 +83,13 @@ async function generateWithGemini({ system, user }: GenerateOptions, key: string
   return text
 }
 
-/** Upstage 와 OpenAI 는 요청 형식이 같다 (OpenAI 호환 chat/completions). */
+/** Upstage · OpenAI · LM Studio(로컬) 는 요청 형식이 같다 (OpenAI 호환 chat/completions). */
 async function generateWithOpenAICompatible(
   { system, user }: GenerateOptions,
   key: string,
   endpoint: string,
-  model: string
+  model: string,
+  timeoutMs: number = TIMEOUT_MS
 ): Promise<string> {
   const messages = system
     ? [{ role: 'system', content: system }, { role: 'user', content: user }]
@@ -81,7 +102,7 @@ async function generateWithOpenAICompatible(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ model, messages }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   })
 
   if (!res.ok) {
@@ -103,6 +124,9 @@ async function runOne(provider: AIProvider, key: string, opts: GenerateOptions):
       return generateWithOpenAICompatible(opts, key, UPSTAGE_ENDPOINT, UPSTAGE_MODEL)
     case 'openai':
       return generateWithOpenAICompatible(opts, key, OPENAI_ENDPOINT, OPENAI_MODEL)
+    case 'lmstudio':
+      // key 자리에는 모델 이름이 온다(ai-keys.ts 참고). 인증은 없다.
+      return generateWithOpenAICompatible(opts, 'lm-studio', LMSTUDIO_ENDPOINT, key, LMSTUDIO_TIMEOUT_MS)
   }
 }
 
@@ -126,8 +150,12 @@ export async function generateText(opts: GenerateOptions, keys: ProviderKey[]): 
       // 시간 초과는 원문이 "The operation was aborted due to timeout" 처럼 나와
       // 원인을 짐작하기 어렵다. 교내망에서 가장 흔한 실패라 따로 적어 준다.
       const timedOut = name === 'TimeoutError' || name === 'AbortError' || /timeout|aborted/i.test(raw)
+      const limitMs = provider === 'lmstudio' ? LMSTUDIO_TIMEOUT_MS : TIMEOUT_MS
+      const timeoutHint = provider === 'lmstudio'
+        ? '이 컴퓨터에서 LM Studio 서버가 켜져 있고 모델이 로드돼 있는지 확인하세요'
+        : '바깥 인터넷이 막혀 있을 수 있습니다'
       const message = timedOut
-        ? `${TIMEOUT_MS / 1000}초 안에 응답 없음 (바깥 인터넷이 막혀 있을 수 있습니다)`
+        ? `${limitMs / 1000}초 안에 응답 없음 (${timeoutHint})`
         : raw
       const label = source ? `${provider}(${source})` : provider
       console.error(`[ai] ${label} 실패: ${message}`)

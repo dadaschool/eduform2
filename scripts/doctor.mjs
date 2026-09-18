@@ -230,6 +230,37 @@ if (!hasGemini && !hasUpstage) {
 }
 
 // ─────────────────────────────────────────────
+// 클라우드 배포에서는 LMSTUDIO_URL 이 가리키는 localhost 에 이 프로세스가
+// 아예 닿지 않는다. 그래서 검사 자체는 늘 하되, 실패해도 problems 에 넣지
+// 않는다 — «설정 안 함» 과 «교내 서버인데 고장남» 을 헷갈리면 안 되니 후자만
+// warn 으로 알리고 넘어간다.
+console.log(head('8. 학교 로컬 모델 (LM Studio, 선택)'))
+if (!env.LMSTUDIO_MODEL) {
+  console.log(warn('건너뜀 (LMSTUDIO_MODEL 없음) — 교내 서버에서 로컬 모델을 쓰려면 .env.local 참고'))
+} else {
+  const base = (env.LMSTUDIO_URL || 'http://127.0.0.1:1234/v1').replace(/\/+$/, '')
+  try {
+    const res = await fetch(`${base}/models`, { signal: AbortSignal.timeout(5_000) })
+    if (!res.ok) {
+      console.log(warn(`LM Studio HTTP ${res.status} — 서버는 응답하는데 오류입니다`))
+    } else {
+      const body = await res.json()
+      const ids = (body?.data ?? []).map((m) => m.id)
+      if (ids.includes(env.LMSTUDIO_MODEL)) {
+        console.log(ok(`LM Studio 정상 — ${env.LMSTUDIO_MODEL} 사용 가능 (교사 전원에게 자동 적용)`))
+      } else {
+        console.log(warn(`LM Studio 는 떠 있지만 LMSTUDIO_MODEL="${env.LMSTUDIO_MODEL}" 은 목록에 없습니다`))
+        console.log(`  ${c.dim}지금 떠 있는 모델: ${ids.join(', ') || '(없음)'}${c.reset}`)
+      }
+    }
+  } catch (err) {
+    const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+    console.log(warn(`LM Studio 에 연결할 수 없습니다 (${base}) — ${timedOut ? '5초 안에 응답 없음' : err.message}`))
+    console.log(`  ${c.dim}이 서버 컴퓨터에서 LM Studio 앱이 켜져 있고 "lms server start" 로 로컬 서버를 켰는지 확인하세요.${c.reset}`)
+  }
+}
+
+// ─────────────────────────────────────────────
 console.log(head(problems === 0 ? `${c.green}점검 통과 — 바로 쓸 수 있습니다.${c.reset}` : `${c.red}문제 ${problems}건${c.reset}`))
 if (todo.length) {
   console.log('할 일:')
