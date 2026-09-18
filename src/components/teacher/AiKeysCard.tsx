@@ -50,6 +50,7 @@ const ALL: Provider[] = ['upstage', 'gemini', 'openai']
 
 export default function AiKeysCard() {
   const [rows, setRows] = useState<KeyRow[]>([])
+  const [localModel, setLocalModel] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [drafts, setDrafts] = useState<Record<Provider, string>>({ upstage: '', gemini: '', openai: '' })
   const [busy, setBusy] = useState<Provider | 'order' | null>(null)
@@ -60,6 +61,7 @@ export default function AiKeysCard() {
       const body = await res.json()
       if (!res.ok) throw new Error(body.error ?? '불러오기 실패')
       setRows(body.keys ?? [])
+      setLocalModel(body.localModel ?? null)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '불러오기 실패')
     } finally {
@@ -158,7 +160,13 @@ export default function AiKeysCard() {
           <p className="text-sm text-gray-400">불러오는 중...</p>
         ) : (
           <>
-            {registered.length === 0 && (
+            {localModel && (
+              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">
+                학교 로컬 모델(<span className="font-mono text-xs">{localModel}</span>)이 켜져 있어
+                등록한 키가 실패해도 자동으로 이어서 씁니다. 요금 없이 이 컴퓨터에서 바로 돕니다.
+              </p>
+            )}
+            {registered.length === 0 && !localModel && (
               <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
                 등록된 키가 없습니다. AI 기능을 쓰려면 아래에서 최소 1개 등록하세요.
               </p>
