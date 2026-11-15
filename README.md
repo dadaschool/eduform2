@@ -4,7 +4,8 @@
 한곳에서 관리하고, 쌓인 자료로 **생활기록부 세특 초안을 AI가 작성**합니다.
 
 > **이 저장소는 학교 안 컴퓨터에서 돌리는 판입니다.**
-> 설치 절차 → **[SELFHOST.md](SELFHOST.md)**
+> 설치 절차 → **[SELFHOST.md](SELFHOST.md)** · 새 판으로 올리기 → `update.ps1`
+> ([SELFHOST.md 의 «업그레이드»](SELFHOST.md#업그레이드--새-판으로-올리기))
 >
 > 리눅스도 Docker 도 쓰지 않고 전부 윈도우 프로그램(Postgres + PostgREST + Node.js)으로
 > 돌아갑니다. 학생 자료가 학교 밖으로 나가지 않고 **AI 기능만** 바깥 인터넷을 씁니다.
@@ -12,7 +13,7 @@
 > 클라우드(Vercel + Supabase)로 쓰시려면 온라인판
 > [dadaschool/eduform](https://github.com/dadaschool/eduform) 을 쓰세요.
 
-`Next.js 14` · `Postgres + PostgREST` · `Tailwind 4 / shadcn` · `Gemini / 업스테이지 Solar`
+`Next.js 14` · `Postgres + PostgREST` · `Tailwind 4 / shadcn` · `학교 로컬 큐웬(LM Studio) / Gemini / 업스테이지 Solar`
 
 ---
 

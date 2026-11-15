@@ -13,6 +13,10 @@
     -CheckOnly    아무것도 바꾸지 않고 사양·프로그램만 점검
     -SkipPrereqs  Git · Node · PostgreSQL 설치를 건너뛴다 (이미 있을 때)
     -NoService    작업 스케줄러 등록과 방화벽 규칙을 건너뛴다
+    -LmStudioModel 이 컴퓨터의 LM Studio 모델(큐웬) 이름 — AI 를 이 모델로 먼저 쓴다
+                  예: -LmStudioModel qwen/qwen3-4b-2507   (lms ls 로 확인)
+
+  이미 설치한 서버를 새 판으로 올릴 때는 이 파일이 아니라 update.ps1 을 쓴다.
 
   리눅스도 Docker 도 쓰지 않는다. Postgres + PostgREST + Node.js 뿐이고
   전부 무료다. 자세한 배경은 SELFHOST.md.
@@ -39,7 +43,8 @@ param(
   [int]$ApiPort = 3001,
   [switch]$CheckOnly,
   [switch]$SkipPrereqs,
-  [switch]$NoService
+  [switch]$NoService,
+  [string]$LmStudioModel = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -226,6 +231,7 @@ if (Test-Path $envLocal) {
   if ((Read-Host "    그래도 새로 만들까요? (y/N)") -ne 'y') {
     Info "기존 설정을 그대로 씁니다"
     $keepExisting = $true
+    if ($LmStudioModel) { Warn "-LmStudioModel 은 기존 설정에 넣지 않았습니다. 설치 뒤 update.ps1 -LmStudioModel $LmStudioModel -Force 로 넣으세요" }
   }
 }
 
@@ -265,6 +271,10 @@ AI_KEY_SECRET=$aiKeySecret
 GEMINI_API_KEY=
 UPSTAGE_API_KEY=
 OPENAI_API_KEY=
+
+# 학교 로컬 모델(LM Studio · 큐웬) — 이 컴퓨터에서 돌 때. 교사 전원이 «맨 먼저» 씁니다.
+# 학생 자료가 학교 밖으로 나가지 않습니다. 비워 두면 위의 바깥 AI 만 씁니다.
+LMSTUDIO_MODEL=$LmStudioModel
 "@ | Set-Content -Encoding UTF8 $envLocal
 
   @"

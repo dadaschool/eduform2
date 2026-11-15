@@ -17,7 +17,7 @@ import type { Class } from '@/lib/types'
 import { fetchMyClasses } from '@/lib/my-classes'
 import { notifyAiError } from '@/lib/ai-error'
 
-const AI_LABEL = { upstage: '업스테이지 Solar', gemini: 'Google Gemini', openai: 'OpenAI ChatGPT' } as const
+const AI_LABEL = { lmstudio: '학교 로컬 모델(큐웬)', upstage: '업스테이지 Solar', gemini: 'Google Gemini', openai: 'OpenAI ChatGPT' } as const
 
 interface ItemDraft {
   id: string

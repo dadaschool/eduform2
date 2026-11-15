@@ -151,8 +151,10 @@ export default function AiKeysCard() {
       </CardHeader>
       <CardContent className="space-y-5">
         <p className="text-xs text-gray-500 leading-relaxed">
-          평가 항목 추천·생활기록부 초안은 <b>내 API 키</b>로 동작합니다. 아래에서 1개 이상 등록하세요.
-          여러 개를 넣으면 <b>순서대로</b> 시도하고, 한 곳에서 할당량이 바닥나거나 오류가 나면 다음 키로 넘어갑니다.
+          {localModel
+            ? <>평가 항목 추천·생활기록부 초안은 <b>학교 로컬 모델</b>로 먼저 동작합니다. 개인 키는 선택입니다.</>
+            : <>평가 항목 추천·생활기록부 초안은 <b>내 API 키</b>로 동작합니다. 아래에서 1개 이상 등록하세요.</>}
+          {' '}여러 개를 넣으면 <b>순서대로</b> 시도하고, 한 곳에서 할당량이 바닥나거나 오류가 나면 다음 키로 넘어갑니다.
           키는 저장 시 암호화되며 다시 표시되지 않습니다(끝 4자리만).
         </p>
 
@@ -162,8 +164,9 @@ export default function AiKeysCard() {
           <>
             {localModel && (
               <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">
-                학교 로컬 모델(<span className="font-mono text-xs">{localModel}</span>)이 켜져 있어
-                등록한 키가 실패해도 자동으로 이어서 씁니다. 요금 없이 이 컴퓨터에서 바로 돕니다.
+                학교 로컬 모델(<span className="font-mono text-xs">{localModel}</span>)을 <b>먼저</b> 씁니다.
+                학교 서버에서 돌아 학생 자료가 밖으로 나가지 않고 요금도 없습니다.
+                아래 키는 로컬 모델이 응답하지 않을 때만 이어서 씁니다 — 등록하지 않아도 됩니다.
               </p>
             )}
             {registered.length === 0 && !localModel && (
