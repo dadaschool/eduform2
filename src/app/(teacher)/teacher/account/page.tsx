@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
 import { KeyRound, User, ShieldCheck } from 'lucide-react'
 import AiKeysCard from '@/components/teacher/AiKeysCard'
+import PasswordChangeForm from '@/components/PasswordChangeForm'
 
 /**
  * 내 계정 — 이름과 비밀번호를 스스로 바꾼다.
@@ -26,7 +26,6 @@ import AiKeysCard from '@/components/teacher/AiKeysCard'
  */
 export default function TeacherAccountPage() {
   const supabase = createClient()
-  const router = useRouter()
 
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
@@ -34,10 +33,6 @@ export default function TeacherAccountPage() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const [currentPw, setCurrentPw] = useState('')
-  const [newPw, setNewPw] = useState('')
-  const [confirmPw, setConfirmPw] = useState('')
-  const [changing, setChanging] = useState(false)
   const [savingName, setSavingName] = useState(false)
 
   const load = useCallback(async () => {
@@ -71,39 +66,6 @@ export default function TeacherAccountPage() {
       toast.error(err instanceof Error ? err.message : '저장 실패')
     } finally {
       setSavingName(false)
-    }
-  }
-
-  async function changePassword(e: React.FormEvent) {
-    e.preventDefault()
-    if (!currentPw) { toast.error('현재 비밀번호를 입력하세요'); return }
-    if (newPw.length < 6) { toast.error('새 비밀번호는 6자 이상이어야 합니다'); return }
-    if (newPw !== confirmPw) { toast.error('새 비밀번호가 일치하지 않습니다'); return }
-    if (newPw === currentPw) { toast.error('지금 쓰는 비밀번호와 같습니다'); return }
-
-    setChanging(true)
-    try {
-      // ① 현재 비밀번호가 맞는지 확인한다. 로그인을 다시 해 보는 것이
-      //    가장 확실하다 — 서버가 실제로 대조해 준다.
-      const { error: wrong } = await supabase.auth.signInWithPassword({ email, password: currentPw })
-      if (wrong) {
-        toast.error('현재 비밀번호가 맞지 않습니다')
-        return
-      }
-
-      // ② 바꾼다
-      const { error } = await supabase.auth.updateUser({ password: newPw })
-      if (error) throw error
-
-      // ③ 다른 기기의 세션은 끊긴다. 여기서도 정리하고 다시 로그인하게 한다.
-      toast.success('비밀번호를 바꿨습니다.', { description: '새 비밀번호로 다시 로그인하세요' })
-      await supabase.auth.signOut()
-      router.push('/login')
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : '변경 실패')
-    } finally {
-      setChanging(false)
-      setCurrentPw(''); setNewPw(''); setConfirmPw('')
     }
   }
 
@@ -154,29 +116,10 @@ export default function TeacherAccountPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={changePassword} className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>현재 비밀번호 *</Label>
-              <Input type="password" value={currentPw} autoComplete="current-password"
-                onChange={e => setCurrentPw(e.target.value)} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>새 비밀번호 (6자 이상) *</Label>
-              <Input type="password" value={newPw} autoComplete="new-password"
-                onChange={e => setNewPw(e.target.value)} required />
-            </div>
-            <div className="space-y-1.5">
-              <Label>새 비밀번호 확인 *</Label>
-              <Input type="password" value={confirmPw} autoComplete="new-password"
-                onChange={e => setConfirmPw(e.target.value)} required />
-            </div>
-            <p className="text-xs text-gray-500">
-              바꾸면 <b>모든 기기에서 로그아웃</b>됩니다. 새 비밀번호로 다시 로그인하세요.
-            </p>
-            <Button type="submit" className="w-full" disabled={changing}>
-              {changing ? '변경 중...' : '비밀번호 변경'}
-            </Button>
-          </form>
+          <PasswordChangeForm email={email} context={{ name: savedName }} />
+          <p className="text-xs text-gray-500 mt-3">
+            바꾸면 <b>다른 기기에서는 모두 로그아웃</b>됩니다.
+          </p>
         </CardContent>
       </Card>
 

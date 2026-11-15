@@ -9,7 +9,7 @@ import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import {
   pool, authError, sessionJson, startSession, userById, refreshHash,
-  newRefreshToken, REFRESH_TTL_DAYS, type UserRow,
+  newRefreshToken, REFRESH_TTL_DAYS,
 } from '@/lib/native-auth'
 
 export const runtime = 'nodejs'
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    if (grant === 'password') return await signIn(body)
+    if (grant === 'password') return await signIn(body, req)
     if (grant === 'refresh_token') return await refresh(body)
     return authError(400, `지원하지 않는 방식입니다: ${grant}`, 'unsupported_grant_type')
   } catch (err) {
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function signIn(body: Record<string, unknown>) {
+async function signIn(body: Record<string, unknown>, req: NextRequest) {
   const email = typeof body.email === 'string' ? body.email : ''
   const password = typeof body.password === 'string' ? body.password : ''
 
@@ -43,17 +43,41 @@ async function signIn(body: Record<string, unknown>) {
     return authError(400, '이메일과 비밀번호를 입력하세요', 'validation_failed')
   }
 
-  const { rows } = await pool().query<UserRow>(
-    'select * from auth.verify_password($1, $2)', [email, password]
+  // 시도 제한·잠금·기록·옛 해시 갱신은 모두 DB 함수 안에서 한다 (auth.sign_in).
+  const { rows } = await pool().query<{ status: string; user_id: string | null; retry_after: number }>(
+    'select * from auth.sign_in($1, $2, $3)', [email, password, clientIp(req)]
   )
+  const r = rows[0]
+
+  if (r?.status === 'locked') {
+    const min = Math.max(1, Math.ceil((r.retry_after ?? 900) / 60))
+    return authError(
+      // 400 으로 준다. 5xx 면 라이브러리가 «일시 오류» 로 보고 재시도한다 (native-auth.ts).
+      400,
+      `비밀번호를 여러 번 틀려 잠시 잠겼습니다. ${min}분 뒤에 다시 하거나 선생님께 잠금 해제를 부탁하세요`,
+      'user_locked'
+    )
+  }
 
   // 이메일이 없는 경우와 비밀번호가 틀린 경우를 구분해 알려주지 않는다.
   // 어느 이메일이 등록되어 있는지 확인하는 수단이 되기 때문이다.
-  if (rows.length === 0) {
+  if (r?.status !== 'ok' || !r.user_id) {
     return authError(400, '이메일 또는 비밀번호가 올바르지 않습니다', 'invalid_credentials')
   }
 
-  return NextResponse.json(await startSession(rows[0]))
+  const user = await userById(r.user_id)
+  if (!user) return authError(400, '이메일 또는 비밀번호가 올바르지 않습니다', 'invalid_credentials')
+  return NextResponse.json(await startSession(user))
+}
+
+/**
+ * 기록용 접속 주소. `next start` 를 직접 띄우면 앞단 프록시가 없어 이 머리글이
+ * 비어 있는 것이 보통이다. 머리글은 누구나 꾸밀 수 있으므로 «기록» 에만 쓰고
+ * 잠금 판단에는 쓰지 않는다 (잠금은 계정 단위).
+ */
+function clientIp(req: NextRequest): string | null {
+  const xff = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+  return (xff || req.headers.get('x-real-ip') || '').slice(0, 64) || null
 }
 
 async function refresh(body: Record<string, unknown>) {

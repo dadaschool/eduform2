@@ -7,8 +7,9 @@
  */
 import { NextResponse } from 'next/server'
 import {
-  authError, callerFromAccessToken, pool, userById, userJson, type UserRow,
+  authError, callerFromAccessToken, pool, policyContext, userById, userJson, type UserRow,
 } from '@/lib/native-auth'
+import { checkOwnPassword } from '@/lib/password-policy'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -39,13 +40,16 @@ export async function PUT(req: Request) {
     if (!user) return authError(401, '계정을 찾을 수 없습니다', 'user_not_found')
 
     if (typeof body.password === 'string' && body.password) {
-      if (body.password.length < 6) {
-        return authError(422, '비밀번호는 6자 이상이어야 합니다', 'weak_password')
-      }
+      // 본인이 정하는 비밀번호 — 엄격한 규칙. 화면은 /api/account/password 를 쓰고
+      // (지금 비밀번호 확인까지 한다), 이 경로는 라이브러리 호환용으로 남겨 둔다.
+      const ctx = await policyContext(caller.sub, user.email)
+      const why = checkOwnPassword(body.password, ctx)
+      if (why) return authError(422, why, 'weak_password')
       // 이 함수는 기존 갱신 토큰을 모두 버린다. 다른 기기의 세션이 끊긴다.
       const { rows } = await pool().query<UserRow>('select * from auth.set_password($1, $2)', [
         caller.sub, body.password,
       ])
+      await pool().query('select auth.set_password_temp($1, false)', [caller.sub])
       user = rows[0] ?? user
     }
 

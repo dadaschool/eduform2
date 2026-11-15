@@ -8,12 +8,11 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { pool, authError, startSession, type UserRow } from '@/lib/native-auth'
+import { checkOwnPassword } from '@/lib/password-policy'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-/** GoTrue 기본값과 같게 둔다. 관리자 엑셀 업로드 화면도 6자로 검사한다. */
-const MIN_PASSWORD = 6
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -27,9 +26,12 @@ export async function POST(req: NextRequest) {
   const password = typeof body.password === 'string' ? body.password : ''
 
   if (!email || !password) return authError(400, '이메일과 비밀번호를 입력하세요', 'validation_failed')
-  if (password.length < MIN_PASSWORD) {
-    return authError(422, `비밀번호는 ${MIN_PASSWORD}자 이상이어야 합니다`, 'weak_password')
-  }
+  // 초대코드 가입은 본인이 비밀번호를 정한다 — 엄격한 규칙 (src/lib/password-policy.ts).
+  const data = (body.data ?? {}) as Record<string, unknown>
+  const why = checkOwnPassword(password, {
+    email, name: typeof data.name === 'string' ? data.name : null,
+  })
+  if (why) return authError(422, why, 'weak_password')
 
   try {
     const { rows } = await pool().query<UserRow>(

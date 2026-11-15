@@ -318,6 +318,10 @@ create table if not exists teacher_ai_keys (
 -- (observations, assessments, student_record_drafts, messages) 정책에는 없다.
 alter table profiles add column if not exists is_admin boolean not null default false;
 
+-- 외부용 명단 (2026-11) — 관리자가 고른 학생만 학교 밖 연습 프로그램 명단(CSV)에 들어간다.
+-- 바꿀 수 있는 사람은 관리자뿐이다 (아래 prevent_role_escalation). docs/accounts-design.md
+alter table profiles add column if not exists external_practice boolean not null default false;
+
 -- 이미 role = 'admin' 인 계정이 있으면 교사 + 관리자로 옮긴다
 update profiles set is_admin = true, role = 'teacher' where role = 'admin';
 
@@ -752,10 +756,24 @@ begin
   -- 고칠 수 있는 사람이 스스로 관리자가 될 수 있다 (profiles_update 에
   -- auth.uid() = id 가 있다).
   if (new.role is distinct from old.role
-      or new.is_admin is distinct from old.is_admin)
+      or new.is_admin is distinct from old.is_admin
+      or new.external_practice is distinct from old.external_practice)
      and current_user in ('anon', 'authenticated')
      and not is_admin() then
-    raise exception '역할과 관리자 권한은 관리자만 변경할 수 있습니다.';
+    raise exception '역할·관리자 권한·외부용 명단은 관리자만 변경할 수 있습니다.';
+  end if;
+  -- 학생은 자기 이름·학번·반·담임을 바꿀 수 없다. 이 값은 학교 계정 서버가
+  -- 다른 프로그램에 «이 학생이 누구인지» 로 넘기는 값이라, 본인이 바꿀 수 있으면
+  -- 다른 학생 행세를 할 수 있다 (profiles_update 에 auth.uid() = id 가 있다).
+  -- 학생 화면은 이 값들을 보여 주기만 하고 고치지 않는다.
+  if current_user in ('anon', 'authenticated')
+     and not is_teacher() and not is_admin()
+     and (new.name is distinct from old.name
+          or new.student_number is distinct from old.student_number
+          or new.class_id is distinct from old.class_id
+          or new.teacher_id is distinct from old.teacher_id
+          or new.email is distinct from old.email) then
+    raise exception '이름·학번·반은 선생님만 바꿀 수 있습니다.';
   end if;
   return new;
 end $$;

@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
-import { ShieldCheck, Users, School, GraduationCap } from 'lucide-react'
+import { needsPasswordChange } from '@/lib/native-auth'
+import { ShieldCheck, Users, School, GraduationCap, Globe, Plug, Lock } from 'lucide-react'
 import LogoutButton from '@/components/LogoutButton'
 import NoProfileNotice from '@/components/NoProfileNotice'
 import { routeForRole } from '@/lib/route-for-role'
@@ -19,6 +20,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+  // 임시 비밀번호(관리자·선생님이 정해 준 것)면 바꾸기 전에는 들어오지 못한다.
+  if (await needsPasswordChange(user.id)) redirect('/change-password')
 
   // select('*') 로 읽는다. 컬럼을 골라 쓰면 DB 에 is_admin 이 아직 없는 동안
   // (스키마를 적용하기 전) 조회 자체가 실패해 «프로필이 없다» 로 보인다.
@@ -54,6 +57,18 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/users"
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100">
             <Users className="w-4 h-4" />사용자 관리
+          </Link>
+          <Link href="/admin/external"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100">
+            <Globe className="w-4 h-4" />외부용 명단
+          </Link>
+          <Link href="/admin/sso"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100">
+            <Plug className="w-4 h-4" />연동 프로그램
+          </Link>
+          <Link href="/admin/security"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100">
+            <Lock className="w-4 h-4" />로그인 보안
           </Link>
         </nav>
         {/* 같은 계정이 교사이기도 하다. 수업 화면으로 바로 넘어갈 수 있어야 한다. */}

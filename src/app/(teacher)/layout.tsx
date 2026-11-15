@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { needsPasswordChange } from '@/lib/native-auth'
 import Sidebar from '@/components/teacher/Sidebar'
 import NoProfileNotice from '@/components/NoProfileNotice'
 import { routeForRole } from '@/lib/route-for-role'
@@ -8,6 +9,8 @@ export default async function TeacherLayout({ children }: { children: React.Reac
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
+  // 임시 비밀번호(관리자·선생님이 정해 준 것)면 바꾸기 전에는 들어오지 못한다.
+  if (await needsPasswordChange(user.id)) redirect('/change-password')
 
   // select('*') — is_admin 이 아직 없는 DB 에서도 조회가 되어야 한다.
   // 컬럼을 골라 쓰면 스키마 적용 전에 «프로필이 없다» 화면이 뜬다.

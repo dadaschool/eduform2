@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
+import { checkOwnPassword, OWN_MIN_LENGTH } from '@/lib/password-policy'
 import { GraduationCap } from 'lucide-react'
 
 export default function RegisterPage() {
@@ -50,10 +51,15 @@ export default function RegisterPage() {
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
+    // 본인이 정하는 비밀번호 — 서버(/auth/v1/signup)도 같은 규칙으로 다시 본다.
+    const weak = checkOwnPassword(password, { email, name })
+    if (weak) { toast.error(weak); return }
     setLoading(true)
     try {
       const supabase = createClient()
-      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password })
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email, password, options: { data: { name } },
+      })
       if (authError) throw authError
       if (!authData.user) throw new Error('회원가입 실패')
 
@@ -137,8 +143,9 @@ export default function RegisterPage() {
                   <Input id="email" type="email" placeholder="student@email.com" value={email} onChange={e => setEmail(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="password">비밀번호 (6자 이상)</Label>
-                  <Input id="password" type="password" placeholder="비밀번호 입력" value={password} onChange={e => setPassword(e.target.value)} minLength={6} required />
+                  <Label htmlFor="password">비밀번호</Label>
+                  <Input id="password" type="password" placeholder="비밀번호 입력" value={password} onChange={e => setPassword(e.target.value)} minLength={OWN_MIN_LENGTH} required aria-describedby="password-rule" autoComplete="new-password" />
+                  <p id="password-rule" className="text-xs text-gray-500">{OWN_MIN_LENGTH}자 이상, 글자와 숫자를 함께. 학번·이름·흔한 비밀번호는 안 됩니다.</p>
                 </div>
                 <div className="flex gap-2">
                   <Button type="button" variant="outline" className="flex-1" onClick={() => setStep('code')}>
