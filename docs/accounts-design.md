@@ -92,7 +92,7 @@
 ```json
 { "alg": "EdDSA", "typ": "JWT", "kid": "<열쇠 id>" }
 {
-  "iss": "http://10.90.10.80:3000",   // 환경변수 SSO_ISSUER 로 고정할 수 있다
+  "iss": "http://10.90.10.80:3000",   // SSO_ISSUER → 없으면 NEXT_PUBLIC_SUPABASE_URL(설치 때 적은 접속 주소)
   "aud": "pycoding",                   // client_id
   "sub": "3a2ee4b7…(32자)",            // 프로그램마다 다른 가명 — 내부 id 아님
   "iat": 1794744259, "exp": 1794744379, // 2분

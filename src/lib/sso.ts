@@ -231,7 +231,22 @@ export function requestOrigin(req: Request): string {
   return `${proto}://${host}`
 }
 
-/** 발급자(iss) — 환경변수 SSO_ISSUER 가 있으면 그것, 없으면 브라우저가 연 주소. */
+/**
+ * 발급자(iss). 연동 프로그램은 이 값을 «설정값» 과 똑같이 비교한다.
+ *
+ *   1. SSO_ISSUER — 있으면 그것
+ *   2. NEXT_PUBLIC_SUPABASE_URL 의 주소 — 교내 설치에서는 install.ps1 이
+ *      http://<서버IP>:3000 으로 적어 둔, 교사·학생이 접속하는 그 주소다
+ *   3. 브라우저가 연 주소
+ *
+ * 브라우저 주소를 먼저 쓰면 누가 localhost:3000 이나 다른 이름으로 들어왔을 때
+ * iss 가 달라져, 채점 서버 같은 프로그램에서 로그인이 영문 모르게 실패한다.
+ */
 export function issuerFor(origin: string): string {
-  return (process.env.SSO_ISSUER || origin).replace(/\/+$/, '')
+  let fromEnv = ''
+  try {
+    const u = process.env.NEXT_PUBLIC_SUPABASE_URL
+    if (u && !/\.supabase\.co$/.test(new URL(u).hostname)) fromEnv = new URL(u).origin
+  } catch { /* 형식이 아니면 건너뛴다 */ }
+  return (process.env.SSO_ISSUER || fromEnv || origin).replace(/\/+$/, '')
 }
