@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { nextFromLocation } from '@/lib/safe-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,7 +25,8 @@ export default function StudentLoginPage() {
       const supabase = createClient()
       const { error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) throw error
-      window.location.replace('/student/dashboard')
+      // ?next= — 다른 프로그램이 «에듀폼2 로 로그인» 으로 보낸 경우 그 화면으로 돌아간다
+      window.location.replace(nextFromLocation() ?? '/student/dashboard')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '로그인에 실패했습니다.')
     } finally {

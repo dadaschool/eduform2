@@ -4,7 +4,8 @@
 한곳에서 관리하고, 쌓인 자료로 **생활기록부 세특 초안을 AI가 작성**합니다.
 
 > **이 저장소는 학교 안 컴퓨터에서 돌리는 판입니다.**
-> 설치 절차 → **[SELFHOST.md](SELFHOST.md)**
+> 설치 절차 → **[SELFHOST.md](SELFHOST.md)** · 새 판으로 올리기 → `update.ps1`
+> ([SELFHOST.md 의 «업그레이드»](SELFHOST.md#업그레이드--새-판으로-올리기))
 >
 > 리눅스도 Docker 도 쓰지 않고 전부 윈도우 프로그램(Postgres + PostgREST + Node.js)으로
 > 돌아갑니다. 학생 자료가 학교 밖으로 나가지 않고 **AI 기능만** 바깥 인터넷을 씁니다.
@@ -12,7 +13,7 @@
 > 클라우드(Vercel + Supabase)로 쓰시려면 온라인판
 > [dadaschool/eduform](https://github.com/dadaschool/eduform) 을 쓰세요.
 
-`Next.js 14` · `Postgres + PostgREST` · `Tailwind 4 / shadcn` · `Gemini / 업스테이지 Solar`
+`Next.js 14` · `Postgres + PostgREST` · `Tailwind 4 / shadcn` · `학교 로컬 큐웬(LM Studio) / Gemini / 업스테이지 Solar`
 
 ---
 
@@ -30,6 +31,9 @@
 | 관찰기록 | 학생별 수시 관찰 누적 |
 | 생활기록부 | **평가·과제·관찰을 종합해 AI가 세특 초안 생성** |
 | 쪽지 | 학생과 1:1 대화 |
+| 학교 계정 서버 | 다른 프로그램(pycoding 등)이 «에듀폼2 로 로그인» — 비밀번호는 넘기지 않고 서명된 이름·학번·반만 ([설계](docs/accounts-design.md)) |
+| 외부용 명단 | 관리자가 고른 학생의 학번·이름·반 CSV — 학교 밖 연습 프로그램용 |
+| 로그인 보안 | 5번 틀리면 15분 잠금 · 첫 로그인 때 임시 비밀번호 바꾸기 · 로그인 기록 |
 
 체크방식 6종: `O/X` · `상/중/하` · `완료/보류/미제출` · `숫자` · `1~5점` · `텍스트`
 

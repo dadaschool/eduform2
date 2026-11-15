@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { toast } from 'sonner'
 import { BookOpen, GraduationCap } from 'lucide-react'
 import { routeForRole } from '@/lib/route-for-role'
+import { nextFromLocation } from '@/lib/safe-next'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -32,7 +33,7 @@ export default function LoginPage() {
       // 서로 밀어내 무한 리다이렉트가 된다.
       // location.replace 로 «새로» 불러온다. router.push 는 브라우저에 남아 있는
       // 이전 사용자의 서버 화면을 그대로 보여줄 수 있다.
-      window.location.replace(profile ? routeForRole(profile.role) : '/student/dashboard')
+      window.location.replace(nextFromLocation() ?? (profile ? routeForRole(profile.role) : '/student/dashboard'))
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : '로그인에 실패했습니다.')
     } finally {

@@ -240,3 +240,48 @@ export async function startSession(u: UserRow) {
   const fresh = (await userById(u.id)) ?? u
   return sessionJson(fresh, token)
 }
+
+// ────────────────────────────────────────────
+//  비밀번호 보안 (docs/accounts-design.md «3»)
+// ────────────────────────────────────────────
+
+/** 비밀번호 규칙 검사에 쓸 그 사람의 학번·이름·이메일. */
+export async function policyContext(userId: string, email?: string | null) {
+  const { rows } = await pool().query<{ name: string | null; student_number: string | null; email: string | null }>(
+    'select name, student_number, email from public.profiles where id = $1', [userId]
+  )
+  return {
+    email: email ?? rows[0]?.email ?? null,
+    name: rows[0]?.name ?? null,
+    studentNumber: rows[0]?.student_number ?? null,
+  }
+}
+
+/**
+ * 임시 비밀번호인가 — 그렇다면 화면에 들어가기 전에 바꾸게 한다.
+ *
+ * 교내 서버(Postgres 직접 연결)에서만 의미가 있다. 연결이 없거나(클라우드 Supabase)
+ * 칸이 아직 없으면(스키마 적용 전) false — 로그인 자체를 막지 않는다.
+ */
+export async function needsPasswordChange(userId: string): Promise<boolean> {
+  if (!process.env.AUTH_DB_URL && !process.env.SUPABASE_DB_URL) return false
+  try {
+    const { rows } = await pool().query<{ password_temp: boolean }>(
+      'select password_temp from auth.users where id = $1', [userId]
+    )
+    return rows[0]?.password_temp === true
+  } catch {
+    return false
+  }
+}
+
+/** 관리자 작업 기록 (개인정보 반출 등). 실패해도 본 작업은 막지 않는다. */
+export async function audit(adminId: string, action: string, detail: Record<string, unknown> = {}) {
+  try {
+    await pool().query('insert into auth.admin_audit (admin_id, action, detail) values ($1, $2, $3)', [
+      adminId, action, JSON.stringify(detail),
+    ])
+  } catch (err) {
+    console.error('[audit] 기록 실패:', action, err)
+  }
+}

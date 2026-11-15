@@ -8,6 +8,7 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 import { authError, isServiceRole, pool, userJson, type UserRow } from '@/lib/native-auth'
+import { checkTempPassword } from '@/lib/password-policy'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,9 +35,9 @@ export async function POST(req: NextRequest) {
   const email = typeof body.email === 'string' ? body.email.trim() : ''
   const password = typeof body.password === 'string' ? body.password : ''
   if (!email || !password) return authError(400, '이메일과 비밀번호가 필요합니다', 'validation_failed')
-  if (password.length < 6) {
-    return authError(422, '비밀번호는 6자 이상이어야 합니다', 'weak_password')
-  }
+  // 관리자·교사가 만들어 주는 계정의 비밀번호 = 임시. 첫 로그인 때 본인이 바꾼다.
+  const why = checkTempPassword(password)
+  if (why) return authError(422, why, 'weak_password')
 
   // email_confirm 이 false 로 와도 확인 처리한다. 교내망에는 메일 서버가 없어
   // 확인 메일을 기다리면 아무도 로그인하지 못한다.
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
       'select * from auth.create_user($1, $2, true, $3)',
       [email, password, JSON.stringify(body.user_metadata ?? {})]
     )
+    await pool().query('select auth.set_password_temp($1, true)', [rows[0].id])
     return NextResponse.json(userJson(rows[0]))
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

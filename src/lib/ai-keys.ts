@@ -6,9 +6,12 @@ import { generateText, type GenerateOptions, type GenerateResult, type ProviderK
 /**
  * 한 교사의 AI 호출에 쓸 키를 순서대로 모은다.
  *
- *   1. 교사가 등록한 키 — teacher_ai_keys, priority 오름차순
- *   2. 학교 로컬 모델(LM Studio) — 서버에 LMSTUDIO_MODEL 이 설정돼 있으면 교사
- *      전원에게 자동으로 붙는다 (관리자 제한 없음. 이유는 바로 아래).
+ *   1. 학교 로컬 모델(LM Studio · 큐웬) — 서버에 LMSTUDIO_MODEL 이 설정돼 있으면
+ *      교사 전원에게 «맨 앞» 에 붙는다 (관리자 제한 없음. 이유는 바로 아래).
+ *      학생 자료가 학교 밖으로 나가지 않는 길을 먼저 쓰고, 실패할 때만 바깥 AI 로
+ *      넘어간다. 앱과 LM Studio 가 같은 컴퓨터라 꺼져 있으면 연결 거부가 바로 와서
+ *      다음 키로 넘어가는 데 오래 걸리지 않는다.
+ *   2. 교사가 등록한 키 — teacher_ai_keys, priority 오름차순
  *   3. (관리자일 때만) 학교 공용 키 — 환경변수. 위 목록에 없는 provider 만 뒤에 붙인다.
  *
  * 공용 env 키를 관리자에게만 여는 이유 — 무료 등급 할당량은 계정당이라 교사
@@ -44,6 +47,13 @@ export async function resolveKeys(opts: { userId: string; isAdmin: boolean }): P
   const keys: ProviderKey[] = []
   const seen = new Set<AIProvider>()
 
+  // 학교 로컬 모델(큐웬) — 교사 전원, 맨 앞. 교사가 개인적으로 «lmstudio» 를
+  // 등록할 방법 자체가 없다 — /api/teacher/ai-keys 가 막는다.
+  const lmstudioModel = process.env.LMSTUDIO_MODEL
+  if (lmstudioModel) {
+    keys.push({ provider: 'lmstudio', key: lmstudioModel, source: '학교 로컬' })
+  }
+
   for (const row of data ?? []) {
     try {
       keys.push({ provider: row.provider as AIProvider, key: decryptKey(row.api_key_enc), source: '내 키' })
@@ -52,13 +62,6 @@ export async function resolveKeys(opts: { userId: string; isAdmin: boolean }): P
       // 복호화 실패(대개 AI_KEY_SECRET 이 바뀐 경우) — 이 키만 건너뛴다.
       console.error(`[ai-keys] ${opts.userId} 의 ${row.provider} 키 복호화 실패:`, err)
     }
-  }
-
-  // 학교 로컬 모델 — 교사 전원. seen 에 없어도 상관없다(교사가 개인적으로
-  // «lmstudio» 를 등록할 방법 자체가 없다 — /api/teacher/ai-keys 가 막는다).
-  const lmstudioModel = process.env.LMSTUDIO_MODEL
-  if (lmstudioModel) {
-    keys.push({ provider: 'lmstudio', key: lmstudioModel, source: '학교 로컬' })
   }
 
   if (opts.isAdmin) {

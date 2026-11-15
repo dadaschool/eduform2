@@ -176,3 +176,14 @@ export interface ShareRow {
   shared_with: string | null
   created_at: string
 }
+
+/** 관리자 «외부용 명단» 화면의 학생 한 줄 (/api/admin/external) */
+export interface ExternalStudent {
+  id: string
+  name: string
+  student_number: string | null
+  external_practice: boolean
+  class_id: string | null
+  class_name: string | null
+  school_year: number | null
+}

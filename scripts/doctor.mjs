@@ -247,7 +247,7 @@ if (!env.LMSTUDIO_MODEL) {
       const body = await res.json()
       const ids = (body?.data ?? []).map((m) => m.id)
       if (ids.includes(env.LMSTUDIO_MODEL)) {
-        console.log(ok(`LM Studio 정상 — ${env.LMSTUDIO_MODEL} 사용 가능 (교사 전원에게 자동 적용)`))
+        console.log(ok(`LM Studio 정상 — ${env.LMSTUDIO_MODEL} 사용 가능 (교사 전원 · AI 를 이 모델로 먼저 시도)`))
       } else {
         console.log(warn(`LM Studio 는 떠 있지만 LMSTUDIO_MODEL="${env.LMSTUDIO_MODEL}" 은 목록에 없습니다`))
         console.log(`  ${c.dim}지금 떠 있는 모델: ${ids.join(', ') || '(없음)'}${c.reset}`)

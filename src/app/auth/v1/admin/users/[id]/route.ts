@@ -9,6 +9,7 @@
  */
 import { NextResponse } from 'next/server'
 import { authError, isServiceRole, pool, userById, userJson, type UserRow } from '@/lib/native-auth'
+import { checkTempPassword } from '@/lib/password-policy'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -40,12 +41,15 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     if (!user) return authError(404, '계정을 찾을 수 없습니다', 'user_not_found')
 
     if (typeof body.password === 'string' && body.password) {
-      if (body.password.length < 6) {
-        return authError(422, '비밀번호는 6자 이상이어야 합니다', 'weak_password')
-      }
+      // 관리자·교사가 정해 주는 비밀번호 = 임시. 그 사람이 첫 로그인 때 바꾼다.
+      const why = checkTempPassword(body.password)
+      if (why) return authError(422, why, 'weak_password')
       const { rows } = await pool().query<UserRow>('select * from auth.set_password($1, $2)', [
         params.id, body.password,
       ])
+      await pool().query('select auth.set_password_temp($1, true)', [params.id])
+      // 잠겨 있던 계정이면 함께 푼다 — 비밀번호를 새로 받았으니 다시 들어올 수 있어야 한다.
+      await pool().query('select auth.unlock_user($1)', [params.id])
       user = rows[0] ?? user
     }
 

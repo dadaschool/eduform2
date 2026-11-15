@@ -111,9 +111,23 @@ async function generateWithOpenAICompatible(
   }
 
   const data = await res.json()
-  const text: string | undefined = data?.choices?.[0]?.message?.content
-  if (!text?.trim()) throw new Error('빈 응답')
-  return text.trim()
+  const raw: string | undefined = data?.choices?.[0]?.message?.content
+  const text = stripThinking(raw ?? '')
+  if (!text) throw new Error('빈 응답')
+  return text
+}
+
+/**
+ * 큐웬3 같은 «생각하는» 모델은 답 앞에 <think>…</think> 로 생각 과정을 붙여 보낸다
+ * (LM Studio 설정에 따라 그대로 content 에 섞여 온다). 그대로 두면 세특 초안에
+ * 생각 과정이 들어가고, 평가 항목 JSON 해석도 깨진다. 닫는 태그만 오는 경우
+ * (여는 태그를 템플릿이 먼저 넣은 경우)도 있어 그 앞을 통째로 버린다.
+ */
+export function stripThinking(text: string): string {
+  let t = text.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  const close = t.toLowerCase().lastIndexOf('</think>')
+  if (close !== -1) t = t.slice(close + '</think>'.length)
+  return t.trim()
 }
 
 async function runOne(provider: AIProvider, key: string, opts: GenerateOptions): Promise<string> {

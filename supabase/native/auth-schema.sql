@@ -134,7 +134,7 @@ begin
   insert into auth.users (email, encrypted_password, email_confirmed_at, raw_user_meta_data)
   values (
     auth.norm_email(p_email),
-    crypt(p_password, gen_salt('bf', 10)),
+    crypt(p_password, gen_salt('bf', 12)),
     case when p_confirm then now() else null end,
     coalesce(p_meta, '{}'::jsonb)
   )
@@ -147,7 +147,7 @@ language plpgsql security definer set search_path = auth, public, extensions as 
 declare v auth.users;
 begin
   update auth.users
-     set encrypted_password = crypt(p_password, gen_salt('bf', 10)), updated_at = now()
+     set encrypted_password = crypt(p_password, gen_salt('bf', 12)), updated_at = now()
    where id = p_id
   returning * into v;
   -- 비밀번호가 바뀌면 기존 세션을 모두 끊는다. 유출된 뒤 바꾸는 경우가 있다.
@@ -233,6 +233,154 @@ begin
 end $$;
 
 -- ------------------------------------------------------------
+--  비밀번호 보안 강화 (2026-11) — docs/accounts-design.md «3. 비밀번호 보안»
+-- ------------------------------------------------------------
+--  bcrypt 비용 12. 위 create_user · set_password 도 12 로 만든다.
+--  예전(10) 해시는 그 사람이 다음에 로그인할 때 sign_in 이 12 로 다시 만든다.
+
+-- 관리자·교사가 정해 준 비밀번호는 «임시». 학생이 첫 로그인 때 바꾼다.
+alter table auth.users add column if not exists password_temp boolean not null default false;
+-- 비밀번호 맞히기 막기 — 15분 안에 5번 틀리면 15분 잠근다.
+alter table auth.users add column if not exists failed_logins int not null default 0;
+alter table auth.users add column if not exists last_failed_at timestamptz;
+alter table auth.users add column if not exists locked_until timestamptz;
+
+-- 로그인 기록. 비밀번호는 남기지 않는다. 90일 지나면 sign_in 이 지운다.
+create table if not exists auth.login_events (
+  id bigserial primary key,
+  at timestamptz not null default now(),
+  user_id uuid references auth.users(id) on delete cascade,
+  email text,
+  ip text,
+  -- ok · bad_password · no_user · locked · banned
+  result text not null
+);
+create index if not exists login_events_at_idx on auth.login_events(at desc);
+create index if not exists login_events_user_idx on auth.login_events(user_id, at desc);
+
+/**
+ * 로그인 한 번. verify_password 를 대신한다.
+ *
+ *   status  ok      — user_id 로 세션을 만든다
+ *           invalid — 이메일이 없거나 비밀번호가 틀렸다 (둘을 구분해 알리지 않는다)
+ *           locked  — 잠겨 있다. retry_after 초 뒤에 다시
+ *
+ * 없는 이메일에도 bcrypt 를 한 번 돈다. 그러지 않으면 응답 시간 차이로
+ * «이 이메일은 등록돼 있다» 를 알아낼 수 있다.
+ */
+create or replace function auth.sign_in(p_email text, p_password text, p_ip text default null)
+returns table (status text, user_id uuid, retry_after int)
+language plpgsql security definer set search_path = auth, public, extensions as $$
+declare
+  u auth.users;
+  v_email text := auth.norm_email(p_email);
+  v_fails int;
+begin
+  delete from auth.login_events where at < now() - interval '90 days';
+
+  select * into u from auth.users where email = v_email;
+
+  if u.id is null then
+    perform crypt(p_password, gen_salt('bf', 12));
+    insert into auth.login_events (email, ip, result) values (v_email, p_ip, 'no_user');
+    return query select 'invalid'::text, null::uuid, 0; return;
+  end if;
+
+  if u.locked_until is not null and u.locked_until > now() then
+    insert into auth.login_events (user_id, email, ip, result) values (u.id, v_email, p_ip, 'locked');
+    return query select 'locked'::text, null::uuid,
+      greatest(1, ceil(extract(epoch from (u.locked_until - now())))::int); return;
+  end if;
+
+  if u.encrypted_password is null
+     or u.encrypted_password <> crypt(p_password, u.encrypted_password) then
+    v_fails := case when u.last_failed_at is null or u.last_failed_at < now() - interval '15 minutes'
+                    then 1 else u.failed_logins + 1 end;
+    if v_fails >= 5 then
+      update auth.users set failed_logins = 0, last_failed_at = now(),
+             locked_until = now() + interval '15 minutes' where id = u.id;
+      insert into auth.login_events (user_id, email, ip, result) values (u.id, v_email, p_ip, 'locked');
+      return query select 'locked'::text, null::uuid, 900; return;
+    end if;
+    update auth.users set failed_logins = v_fails, last_failed_at = now() where id = u.id;
+    insert into auth.login_events (user_id, email, ip, result) values (u.id, v_email, p_ip, 'bad_password');
+    return query select 'invalid'::text, null::uuid, 0; return;
+  end if;
+
+  -- 비밀번호는 맞다. 정지 계정은 «틀림» 과 같은 답을 준다 (예전 verify_password 와 같다).
+  if u.banned_until is not null and u.banned_until > now() then
+    insert into auth.login_events (user_id, email, ip, result) values (u.id, v_email, p_ip, 'banned');
+    return query select 'invalid'::text, null::uuid, 0; return;
+  end if;
+
+  update auth.users
+     set failed_logins = 0, last_failed_at = null, locked_until = null, last_sign_in_at = now(),
+         encrypted_password = case when encrypted_password like '$2a$12$%' then encrypted_password
+                                   else crypt(p_password, gen_salt('bf', 12)) end
+   where id = u.id;
+  insert into auth.login_events (user_id, email, ip, result) values (u.id, v_email, p_ip, 'ok');
+  return query select 'ok'::text, u.id, 0;
+end $$;
+
+create or replace function auth.set_password_temp(p_id uuid, p_temp boolean) returns void
+language sql security definer set search_path = auth, public as $$
+  update auth.users set password_temp = p_temp where id = p_id
+$$;
+
+create or replace function auth.unlock_user(p_id uuid) returns void
+language sql security definer set search_path = auth, public as $$
+  update auth.users set failed_logins = 0, last_failed_at = null, locked_until = null where id = p_id
+$$;
+
+-- ------------------------------------------------------------
+--  학교 계정 서버 (2026-11) — docs/accounts-design.md «1. 학교 계정 서버»
+-- ------------------------------------------------------------
+--  다른 프로그램이 에듀폼2 계정으로 로그인한다. 비밀번호는 넘기지 않고,
+--  에듀폼2 가 Ed25519 로 서명한 «이 학생 맞음» 증명(id_token)만 넘긴다.
+
+create table if not exists auth.sso_clients (
+  client_id     text primary key check (client_id ~ '^[a-z0-9][a-z0-9-]{1,39}$'),
+  name          text not null,
+  -- 정확히 같은 주소로만 돌려보낸다. 앞부분만 맞는 주소는 받지 않는다.
+  redirect_uris text[] not null default '{}',
+  roles         text[] not null default '{student,teacher}',
+  -- 프로그램마다 다른 소금으로 sub 을 만든다 — 프로그램끼리 학생을 맞대어 추적하지 못하게
+  sub_salt      text not null default encode(gen_random_bytes(32), 'hex'),
+  enabled       boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- 서명 열쇠. 비밀 열쇠는 AI_KEY_SECRET 으로 암호화해 둔다 (src/lib/ai-crypto.ts).
+create table if not exists auth.sso_keys (
+  kid         text primary key,
+  public_jwk  jsonb not null,
+  private_enc text not null,
+  active      boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+
+-- 증명을 언제 누구에게 내줬는지. 증명 원문은 남기지 않는다.
+create table if not exists auth.sso_events (
+  id         bigserial primary key,
+  at         timestamptz not null default now(),
+  client_id  text,
+  user_id    uuid references auth.users(id) on delete cascade,
+  jti        text
+);
+create index if not exists sso_events_at_idx on auth.sso_events(at desc);
+
+-- 관리자 작업 기록 — 외부용 명단 내려받기 같은 개인정보 반출을 남긴다.
+create table if not exists auth.admin_audit (
+  id        bigserial primary key,
+  at        timestamptz not null default now(),
+  admin_id  uuid references auth.users(id) on delete set null,
+  action    text not null,
+  detail    jsonb not null default '{}'::jsonb
+);
+create index if not exists admin_audit_at_idx on auth.admin_audit(at desc);
+
+-- ------------------------------------------------------------
 --  권한
 -- ------------------------------------------------------------
 grant usage on schema auth, extensions, public to anon, authenticated, service_role;
@@ -245,12 +393,21 @@ revoke all on function
   auth.verify_password(text, text), auth.create_user(text, text, boolean, jsonb),
   auth.set_password(uuid, text), auth.set_email(uuid, text),
   auth.store_refresh_token(uuid, text, int, text), auth.use_refresh_token(text),
-  auth.revoke_user_tokens(uuid)
+  auth.revoke_user_tokens(uuid),
+  auth.sign_in(text, text, text), auth.set_password_temp(uuid, boolean), auth.unlock_user(uuid)
   from public, anon, authenticated, service_role;
 
 -- 학생 이메일을 교사 화면에서 보여줄 때가 있어 select 만 허용한다.
-grant select on auth.users to authenticated, service_role;
+-- 단 «열 단위» 로 — 비밀번호 해시와 잠금 상태는 웹에서 오는 역할이 읽지 못한다.
+-- (예전에는 표 전체 select 였다. PostgREST 가 auth 스키마를 내보내지 않아 직접
+--  닿지는 않지만, public 의 함수·뷰가 실수로 해시를 넘기는 길을 미리 막는다.)
+revoke select on auth.users from authenticated, service_role;
+grant select (id, aud, role, email, email_confirmed_at, last_sign_in_at,
+              raw_app_meta_data, raw_user_meta_data, banned_until, created_at, updated_at)
+  on auth.users to authenticated, service_role;
 revoke all on auth.refresh_tokens from anon, authenticated, service_role;
+revoke all on auth.login_events, auth.sso_clients, auth.sso_keys, auth.sso_events, auth.admin_audit
+  from public, anon, authenticated, service_role;
 
 -- PostgREST 가 public 스키마를 다룰 수 있게 한다. 실제 접근 제한은 RLS 가 한다.
 grant all on all tables in schema public to anon, authenticated, service_role;

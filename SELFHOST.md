@@ -30,6 +30,7 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\install.ps1" -ServerIp 10.91
 | `-NoService` | 작업 스케줄러·방화벽 설정을 건너뜁니다 |
 | `-Root C:\srv` | 설치 위치 |
 | `-AppPort 3000` `-ApiPort 3001` | 포트 |
+| `-LmStudioModel qwen/...` | 이 컴퓨터의 LM Studio 모델(큐웬)을 AI 로 **먼저** 씁니다 — 아래 «학교 로컬 모델» |
 
 스크립트가 하는 일 — 사양 확인 → 프로그램 설치 → PostgREST 내려받기 →
 소스 받기 → 키 생성(되읽어 대조) → 표 만들기 → 관리자 계정 → 빌드 →
@@ -41,6 +42,46 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\install.ps1" -ServerIp 10.91
 
 멈추면 그 자리에서 이유를 알려줍니다. 아래 단계별 설명은 **손으로 하실 때나
 스크립트가 멈춘 곳을 들여다볼 때** 보세요.
+
+---
+
+## 업그레이드 — 새 판으로 올리기
+
+이미 설치한 서버는 `install.ps1` 을 다시 돌리지 말고 **`update.ps1`** 을 씁니다.
+**서버 컴퓨터의** 관리자 PowerShell 에서 두 줄 — 깃허브에서 바로 받아 실행합니다:
+
+```powershell
+irm https://raw.githubusercontent.com/dadaschool/eduform2/main/update.ps1 -OutFile "$env:TEMP\update.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\update.ps1"
+```
+
+설치 스크립트로 설치했으면 `C:\srv\eduform2`, 이 문서대로 손으로 설치했으면 `C:\srv\eduform` 을
+알아서 찾습니다. 다른 곳이면 `-AppDir D:\어딘가\eduform` 을 붙이세요.
+학교 로컬 모델(큐웬)을 함께 켜려면 끝에 `-LmStudioModel <모델 이름>` (`lms ls` 로 확인).
+
+**앱이 3~5분 멈춥니다. 수업 시간을 피하세요.** 시작 전에 한 번 더 묻습니다.
+
+하는 일 — 새 판 확인 → **DB 백업**(`C:\srv\backup\eduform_before-update_….dump`) →
+앱 멈춤 → 소스 받기 → 패키지(바뀐 경우만) → 표·정책 다시 적용 → 빌드 → 다시 시작 → 응답 점검.
+
+- **새 판 빌드가 실패하면 이전 판으로 되돌려** 다시 켭니다. 앱이 꺼진 채로 남지 않습니다.
+- `.env.local` · `postgrest.conf` 의 키와 비밀번호는 건드리지 않습니다. 데이터도 지우지 않습니다.
+- postgres 비밀번호를 한 번 물어봅니다(백업·표 적용용, 저장하지 않음).
+- 서버에서 소스 파일을 직접 고쳐 둔 게 있으면 덮어쓰지 않고 멈춥니다.
+
+| 옵션 | |
+|---|---|
+| `-CheckOnly` | 새 판이 있는지만 봅니다. 아무것도 바꾸지 않습니다 |
+| `-AppDir 폴더` | 에듀폼 소스 폴더를 직접 알려 줍니다 |
+| `-LmStudioModel qwen/...` | 학교 로컬 모델 이름을 `.env.local` 에 넣거나 바꿉니다 |
+| `-Force` | 새 판이 없어도 다시 빌드·재시작합니다 (설정만 바꿨을 때) |
+| `-Yes` | «지금 진행할까요?» 를 묻지 않습니다 |
+
+잘못됐을 때 되살리기(업그레이드 직전으로):
+
+```powershell
+& "C:\Program Files\PostgreSQL\17\bin\pg_restore.exe" -U postgres -h 127.0.0.1 -d postgres --clean "C:\srv\backup\<백업 파일>.dump"
+```
 
 ---
 
@@ -237,10 +278,14 @@ lms server start
 lms load <모델 경로>        # lms ls 로 받아 둔 모델 목록을 본다
 ```
 `.env.local` 에 `LMSTUDIO_MODEL=<위 모델 경로>` 한 줄만 넣으면 됩니다(포트를
-기본값 3000/3001/5432 와 겹치지 않게 바꿨다면 `LMSTUDIO_URL` 도). 관리자 전용이
-아니라 **교사 전원에게 자동으로** 열립니다 — 계정별 할당량도 청구서도 없는
-로컬 모델이기 때문입니다. 다만 학교 서버 사양에 따라 클라우드보다 느릴 수 있고,
-**앱과 LM Studio 가 같은 컴퓨터에서 돌 때만** 동작합니다.
+기본값 3000/3001/5432 와 겹치지 않게 바꿨다면 `LMSTUDIO_URL` 도). 이미 설치한 서버라면
+`update.ps1 -LmStudioModel <모델 경로> -Force` 가 이 줄을 넣고 다시 시작까지 해 줍니다.
+관리자 전용이 아니라 **교사 전원에게 자동으로** 열리고, 교사가 등록한 개인 키보다
+**먼저** 씁니다 — 학생 자료가 학교 밖으로 나가지 않고, 계정별 할당량도 청구서도 없기
+때문입니다. 로컬 모델이 응답하지 않을 때만 개인 키로 넘어갑니다. 큐웬3 의 `<think>`
+생각 과정은 앱이 걸러 냅니다. 다만 학교 서버 사양에 따라 클라우드보다 느릴 수 있고,
+**앱과 LM Studio 가 같은 컴퓨터에서 돌 때만** 동작합니다. 재부팅 뒤에도 LM Studio
+서버가 켜져 있어야 합니다 — 점검은 `npm run doctor` 의 «8. 학교 로컬 모델».
 
 이어서 PostgREST 설정. 3단계 출력 **셋째 덩이**를 그대로 넣습니다.
 
@@ -389,6 +434,7 @@ schtasks /run /tn "에듀폼 백업"
 - **HTTP 입니다.** 같은 망에 있는 사람이 통신을 들여다보면 비밀번호가 보입니다. 신경 쓰이면
   인증서를 넣으세요. 학교 밖에서는 접속되지 않습니다 (사설 IP).
 - **AI 기능만 바깥 인터넷을 씁니다.** 막혀 있으면 그 두 기능만 안 됩니다.
+  학교 로컬 모델(LM Studio · 큐웬)을 켜 두면 인터넷 없이도 되고, 그 모델을 **먼저** 씁니다.
 - **정전.** 상시 서버라면 UPS 를 두는 편이 좋습니다.
 
 ---
