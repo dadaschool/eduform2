@@ -62,18 +62,19 @@ export async function POST(req: Request) {
         error: `학번이 없는 학생은 외부용에 넣을 수 없습니다: ${noNumber.slice(0, 10).map(s => s.name).join(', ')}`,
       }, { status: 409 })
     }
-    // 등록 뒤의 외부용 명단 안에서 학번이 겹치면 외부 프로그램이 학생을 구분하지 못한다.
+    // 등록 뒤의 외부용 명단 안에서 «반 + 학번» 이 겹치면 외부 프로그램이 학생을 구분하지 못한다.
+    // 학번은 30101 처럼 전체일 수도, 반 안의 번호(1, 2, …)일 수도 있다 — 그래서 반과 함께 본다.
     const after = all.filter(s => s.external_practice || targets.some(t => t.id === s.id))
-    const byNum = new Map<string, string[]>()
+    const byKey = new Map<string, string[]>()
     for (const s of after) {
-      const k = norm(s.student_number)
-      byNum.set(k, [...(byNum.get(k) ?? []), s.name])
+      const k = `${s.class_id ?? '-'}|${norm(s.student_number)}`
+      byKey.set(k, [...(byKey.get(k) ?? []), s.name])
     }
-    const dups = [...byNum.entries()].filter(([, v]) => v.length > 1)
+    const dups = [...byKey.entries()].filter(([, v]) => v.length > 1)
     if (dups.length) {
       return NextResponse.json({
-        error: '외부용 명단 안에서 학번이 겹칩니다. 학번을 30101 처럼 학년·반·번호 전체로 고친 뒤 다시 하세요: '
-          + dups.slice(0, 5).map(([k, v]) => `${k}(${v.join('·')})`).join(', '),
+        error: '외부용 명단 안에서 같은 반·같은 학번인 학생이 있습니다. 학번을 고친 뒤 다시 하세요: '
+          + dups.slice(0, 5).map(([k, v]) => `${k.split('|')[1]}(${v.join('·')})`).join(', '),
       }, { status: 409 })
     }
   }

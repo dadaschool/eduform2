@@ -150,6 +150,7 @@ export async function publicJwks(): Promise<{ keys: Ed25519Jwk[] }> {
 export interface IdentityRow {
   name: string
   role: 'student' | 'teacher'
+  is_admin: boolean
   student_number: string | null
   class_name: string | null
   school_year: number | null
@@ -157,7 +158,8 @@ export interface IdentityRow {
 
 export async function identityOf(userId: string): Promise<IdentityRow | null> {
   const { rows } = await pool().query<IdentityRow>(
-    `select p.name, p.role, p.student_number, c.name as class_name, c.year as school_year
+    `select p.name, p.role, coalesce(p.is_admin, false) as is_admin,
+            p.student_number, c.name as class_name, c.year as school_year
        from public.profiles p left join public.classes c on c.id = p.class_id
       where p.id = $1`,
     [userId]
@@ -193,6 +195,8 @@ export async function issueIdToken(opts: {
     nonce: opts.nonce,
     name: who.name,
     role: who.role,
+    // 관리자 표시 — 연동 프로그램이 교사 화면에서 관리 기능을 열지 정할 때 쓴다
+    is_admin: who.is_admin === true,
     student_number: who.student_number,
     class_name: who.class_name,
     school_year: who.school_year,
