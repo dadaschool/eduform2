@@ -4,12 +4,15 @@
 =============================================================
 
   install.ps1 로 설치한 서버를 깃허브의 새 판으로 올린다.
-  관리자 PowerShell 에서:
+  관리자 PowerShell 에서 (서버 컴퓨터에서 바로 받아 실행):
 
-    powershell -ExecutionPolicy Bypass -File C:\srv\eduform2\update.ps1
+    irm https://raw.githubusercontent.com/dadaschool/eduform2/main/update.ps1 -OutFile "$env:TEMP\update.ps1"
+    powershell -ExecutionPolicy Bypass -File "$env:TEMP\update.ps1"
 
   옵션
     -Root          설치 위치 (기본 C:\srv — install.ps1 과 같게)
+    -AppDir        에듀폼 소스 폴더. 비우면 C:\srv\eduform2 (설치 스크립트) →
+                   C:\srv\eduform (SELFHOST.md 대로 손으로 설치) 순서로 찾는다
     -CheckOnly     새 판이 있는지만 본다. 아무것도 바꾸지 않는다
     -LmStudioModel 학교 로컬 모델(큐웬) 이름을 .env.local 에 넣는다/바꾼다
                    예: -LmStudioModel qwen/qwen3-4b-2507   (lms ls 로 확인)
@@ -36,6 +39,7 @@
 [CmdletBinding()]
 param(
   [string]$Root = 'C:\srv',
+  [string]$AppDir = '',
   [string]$PgVersion = '17',
   [int]$AppPort = 3000,
   [int]$ApiPort = 3001,
@@ -61,7 +65,12 @@ try {
   chcp 65001 > $null
 } catch { }
 
-$AppDir   = Join-Path $Root 'eduform2'
+# 설치 스크립트는 eduform2, SELFHOST.md 의 손 설치는 eduform 폴더를 쓴다
+if (-not $AppDir) {
+  $AppDir = Join-Path $Root 'eduform2'
+  $manual = Join-Path $Root 'eduform'
+  if (-not (Test-Path (Join-Path $AppDir '.git')) -and (Test-Path (Join-Path $manual '.git'))) { $AppDir = $manual }
+}
 $PgBin    = "C:\Program Files\PostgreSQL\$PgVersion\bin"
 $Psql     = Join-Path $PgBin 'psql.exe'
 $PgDump   = Join-Path $PgBin 'pg_dump.exe'
@@ -338,7 +347,7 @@ $nowRev = (Git rev-parse --short HEAD).Trim()
 if ($fail -eq 0) {
   Write-Host "  업그레이드가 끝났습니다. 지금 판: $nowRev" -ForegroundColor Green
   Write-Host "    백업      $dump" -ForegroundColor DarkGray
-  Write-Host "    점검      npm run doctor   (C:\srv\eduform2 에서)" -ForegroundColor DarkGray
+  Write-Host "    점검      npm run doctor   ($AppDir 에서)" -ForegroundColor DarkGray
   Restore-Console
 } else {
   Write-Host "  $fail 곳이 응답하지 않습니다. 잠시 뒤 다시 확인하거나 로그를 보세요:" -ForegroundColor Red

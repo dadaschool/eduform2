@@ -48,11 +48,16 @@ powershell -ExecutionPolicy Bypass -File "$env:TEMP\install.ps1" -ServerIp 10.91
 ## 업그레이드 — 새 판으로 올리기
 
 이미 설치한 서버는 `install.ps1` 을 다시 돌리지 말고 **`update.ps1`** 을 씁니다.
-관리자 PowerShell 에서:
+**서버 컴퓨터의** 관리자 PowerShell 에서 두 줄 — 깃허브에서 바로 받아 실행합니다:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File C:\srv\eduform2\update.ps1
+irm https://raw.githubusercontent.com/dadaschool/eduform2/main/update.ps1 -OutFile "$env:TEMP\update.ps1"
+powershell -ExecutionPolicy Bypass -File "$env:TEMP\update.ps1"
 ```
+
+설치 스크립트로 설치했으면 `C:\srv\eduform2`, 이 문서대로 손으로 설치했으면 `C:\srv\eduform` 을
+알아서 찾습니다. 다른 곳이면 `-AppDir D:\어딘가\eduform` 을 붙이세요.
+학교 로컬 모델(큐웬)을 함께 켜려면 끝에 `-LmStudioModel <모델 이름>` (`lms ls` 로 확인).
 
 **앱이 3~5분 멈춥니다. 수업 시간을 피하세요.** 시작 전에 한 번 더 묻습니다.
 
@@ -67,6 +72,7 @@ powershell -ExecutionPolicy Bypass -File C:\srv\eduform2\update.ps1
 | 옵션 | |
 |---|---|
 | `-CheckOnly` | 새 판이 있는지만 봅니다. 아무것도 바꾸지 않습니다 |
+| `-AppDir 폴더` | 에듀폼 소스 폴더를 직접 알려 줍니다 |
 | `-LmStudioModel qwen/...` | 학교 로컬 모델 이름을 `.env.local` 에 넣거나 바꿉니다 |
 | `-Force` | 새 판이 없어도 다시 빌드·재시작합니다 (설정만 바꿨을 때) |
 | `-Yes` | «지금 진행할까요?» 를 묻지 않습니다 |
